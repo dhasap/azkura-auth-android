@@ -1,0 +1,26 @@
+# Built APK and build outputs
+/app/build/
+/build/
+
+# Gradle
+.gradle/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kotlin
+*.class
+
+# Signing
+*.jks
+*.keystore
+
+# Room schema exports (keep in repo for migrations)
+# /app/schemas/
+.kotlin/

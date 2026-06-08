@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#0A0A0A</color>
+    <color name="surface">#161616</color>
+    <color name="surfaceVariant">#222222</color>
+    <color name="primary">#00E5FF</color>
+    <color name="secondary">#888888</color>
+    <color name="error">#FF3B3B</color>
+    <color name="onBackground">#FFFFFF</color>
+    <color name="onSurface">#FFFFFF</color>
+    <color name="onSurfaceVariant">#888888</color>
+    <color name="outline">#303030</color>
+    <color name="warning">#FF8800</color>
+</resources>
