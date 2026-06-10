@@ -126,7 +126,25 @@ class HomeViewModel @Inject constructor(
     }
 
 
+
+    fun onMoveAccount(fromIndex: Int, toIndex: Int) {
+        val currentAccounts = _uiState.value.accounts.toMutableList()
+        if (fromIndex !in currentAccounts.indices || toIndex !in currentAccounts.indices) return
+
+        val item = currentAccounts.removeAt(fromIndex)
+        currentAccounts.add(toIndex, item)
+        _uiState.value = _uiState.value.copy(accounts = currentAccounts)
+
+        // Save new order to database
+        viewModelScope.launch {
+            currentAccounts.forEachIndexed { index, wrapper ->
+                accountRepository.updateAccount(wrapper.account.copy(order = index))
+            }
+        }
+    }
+
     fun onCreateFolder(name: String) {
+
         viewModelScope.launch {
             val id = "folder_${System.currentTimeMillis()}"
             val colors = arrayOf("#00E5FF", "#FF3D00", "#D500F9", "#00E676", "#1DE9B6", "#FFEA00")

@@ -87,6 +87,13 @@ import id.azkura.auth.ui.theme.BorderSubtle
 import id.azkura.auth.ui.theme.TextMuted
 import id.azkura.auth.ui.theme.TextPrimary
 import id.azkura.auth.ui.theme.TextSecondary
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
+import id.azkura.auth.util.ReorderState
+
 import id.azkura.auth.ui.theme.TotpDanger
 import id.azkura.auth.ui.theme.TotpNormal
 import id.azkura.auth.ui.theme.TotpWarning
@@ -105,10 +112,16 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     
+
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var newFolderName by remember { mutableStateOf("") }
+    
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val reorderState = remember { ReorderState(listState, viewModel::onMoveAccount, scope) }
+
 
 
     Scaffold(

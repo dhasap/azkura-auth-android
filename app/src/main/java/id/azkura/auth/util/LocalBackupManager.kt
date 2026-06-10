@@ -304,7 +304,7 @@ private data class FolderMergeResult(
 @Serializable
 private data class LocalBackupData(
     val app: String = "azkura-auth",
-    val version: String = "2.2.0",
+    val version: String = "2.3.0",
     val exportedAt: String = "",
     val accountCount: Int = 0,
     val folderCount: Int = 0,
