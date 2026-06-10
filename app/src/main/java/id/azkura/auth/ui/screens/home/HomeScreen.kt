@@ -37,6 +37,13 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.SwipeToDismissBoxState
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.runtime.rememberCoroutineScope
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.mutableStateOf
@@ -56,7 +63,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,6 +138,9 @@ fun HomeScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = BgBase),
                 actions = {
+                    IconButton(onClick = onNavigateToScanner) {
+                        Icon(Icons.Default.QrCodeScanner, "Scan QR", tint = TextSecondary)
+                    }
                     IconButton(onClick = viewModel::onToggleSearch) {
                         Icon(
                             if (state.isSearchActive) Icons.Default.Close else Icons.Default.Search,
@@ -155,24 +164,12 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
-                FloatingActionButton(
-                    onClick = onNavigateToScanner,
-                    containerColor = BgElevated,
-                    contentColor = Accent,
-                    modifier = Modifier.size(48.dp),
-                    shape = CircleShape,
-                ) {
-                    Icon(Icons.Default.QrCodeScanner, "Scan QR", modifier = Modifier.size(22.dp))
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                FloatingActionButton(
-                    onClick = onNavigateToAdd,
-                    containerColor = Accent,
-                    contentColor = Color.Black,
-                ) {
-                    Icon(Icons.Default.Add, "Add Account")
-                }
+            FloatingActionButton(
+                onClick = onNavigateToAdd,
+                containerColor = Accent,
+                contentColor = Color.Black,
+            ) {
+                Icon(Icons.Default.Add, "Add Account")
             }
         },
     ) { paddingValues ->
@@ -236,7 +233,7 @@ fun HomeScreen(
                 }
             } else {
                 LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(state.accounts, key = { it.account.id }) { item ->
@@ -314,6 +311,7 @@ private fun FolderChip(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AccountCard(
     item: AccountWithCode,
@@ -321,122 +319,149 @@ private fun AccountCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val meta = ServiceIconMap.getServiceMeta(item.account.issuer)
-    val bgColor = try { Color(meta.bg.toColorInt()) } catch (_: Exception) { Accent }
+    val meta = id.azkura.auth.util.ServiceIconMap.getServiceMeta(item.account.issuer)
+    val bgColor = try { Color(android.graphics.Color.parseColor(meta.bg)) } catch (_: Exception) { Accent }
     val progress = item.remainingSeconds.toFloat() / item.period.toFloat()
     val animatedProgress by animateFloatAsState(progress, label = "totp_progress")
+    val isBlinking = item.remainingSeconds <= 5
+    val blinkAlpha by animateFloatAsState(if (isBlinking) 0.3f else 1f, label = "blink")
     val timerColor by animateColorAsState(
-        when {
-            item.remainingSeconds <= 5 -> TotpDanger
-            item.remainingSeconds <= 10 -> TotpWarning
-            else -> TotpNormal
-        },
+        if (item.remainingSeconds <= 5) TotpDanger else TotpNormal,
         label = "timer_color",
     )
 
-    // Format code with space in middle: "123 456"
     val formattedCode = if (item.code.length == 6) {
-        "${item.code.substring(0, 3)} ${item.code.substring(3)}"
+        "${item.code.substring(0, 3)}  ${item.code.substring(3)}"
     } else if (item.code.length == 8) {
-        "${item.code.substring(0, 4)} ${item.code.substring(4)}"
+       "${item.code.substring(0, 4)}  ${item.code.substring(4)}"
     } else {
         item.code
     }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(BgCard)
-            .clickable(onClick = onCopy)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Service icon circle
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(bgColor),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = meta.letter,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 18.sp,
-            )
-        }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        // Account info
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.account.issuer.ifEmpty { "Unknown" },
-                style = MaterialTheme.typography.titleSmall,
-                color = TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (item.account.account.isNotEmpty()) {
-                Text(
-                    text = item.account.account,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextMuted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+    val context = LocalContext.current
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.EndToStart -> {
+                    onDelete()
+                    true
+                }
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onEdit()
+                    false
+                }
+                else -> false
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = formattedCode,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 2.sp,
-                ),
-                color = TextPrimary,
-                fontWeight = FontWeight.Bold,
-            )
         }
+    )
 
-        // Timer & actions
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier.size(36.dp),
-                    color = timerColor,
-                    trackColor = BorderSubtle,
-                    strokeWidth = 3.dp,
-                )
-                Text(
-                    text = "${item.remainingSeconds}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = timerColor,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row {
-                Icon(
-                    Icons.Default.ContentCopy,
-                    "Copy",
-                    tint = TextMuted,
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromEndToStart = true, 
+        enableDismissFromStartToEnd = true, 
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            if (direction == SwipeToDismissBoxValue.EndToStart) {
+                
+                Box(
                     modifier = Modifier
-                        .size(20.dp)
-                        .clickable(onClick = onCopy),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(
-                    Icons.Default.Edit,
-                    "Edit",
-                    tint = TextMuted,
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(TotpDanger)
+                        .padding(horizontal = 20.dp),
+                    contentAlignment = Alignment.CenterEnd
+                ) {
+                    Icon(Icons.Default.Delete, "Delete", tint = Color.White)
+                }
+            } else if (direction == SwipeToDismissBoxValue.StartToEnd) {
+                
+                Box(
                     modifier = Modifier
-                        .size(20.dp)
-                        .clickable(onClick = onEdit),
-                )
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Accent)
+                        .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.CenterStart
+                ) {
+                    Icon(Icons.Default.Edit, "Edit", tint = Color.Black)
+                }
+            }
+        },
+        content = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(BgCard)
+                    .clickable {
+                        onCopy()
+                        Toast.makeText(context, "Kode disalin", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(bgColor),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = meta.letter,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.account.issuer.ifEmpty { "Unknown" },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (item.account.account.isNotEmpty()) {
+                        Text(
+                            text = item.account.account,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = formattedCode,
+                        style = MaterialTheme.typography.headlineLarge.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 2.sp,
+                            fontFeatureSettings = "tnum"
+                        ),
+                        color = TextPrimary,
+                    )
+                }
+
+                
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            progress = { animatedProgress },
+                            modifier = Modifier.size(36.dp),
+                            color = timerColor.copy(alpha = blinkAlpha),
+                            trackColor = BorderSubtle,
+                            strokeWidth = 3.dp,
+                        )
+                    }
+                }
             }
         }
-    }
+    )
 }

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -7,16 +9,54 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+val keystoreProperties = Properties().apply {
+    val propertiesFile = rootProject.file("keystore.properties")
+    if (propertiesFile.exists()) {
+        propertiesFile.inputStream().use(::load)
+    }
+}
+
+fun signingProperty(name: String): String? {
+    return (keystoreProperties.getProperty(name)
+        ?: providers.gradleProperty(name).orNull
+        ?: providers.environmentVariable(name).orNull)
+        ?.takeIf { it.isNotBlank() }
+}
+
+val releaseStoreFilePath = signingProperty("AZKURA_AUTH_RELEASE_STORE_FILE") ?: signingProperty("storeFile")
+val releaseStorePassword = signingProperty("AZKURA_AUTH_RELEASE_STORE_PASSWORD") ?: signingProperty("storePassword")
+val releaseKeyAlias = signingProperty("AZKURA_AUTH_RELEASE_KEY_ALIAS") ?: signingProperty("keyAlias")
+val releaseKeyPassword = signingProperty("AZKURA_AUTH_RELEASE_KEY_PASSWORD") ?: signingProperty("keyPassword")
+val releaseStoreFile = releaseStoreFilePath?.let { rootProject.file(it) }
+val hasReleaseSigning = releaseStoreFile?.exists() == true &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "id.azkura.auth"
     compileSdk = 35
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "id.azkura.auth"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 220
+        versionName = "2.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -27,6 +67,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
