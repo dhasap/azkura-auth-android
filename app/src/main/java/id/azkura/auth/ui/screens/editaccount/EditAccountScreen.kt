@@ -24,6 +24,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -43,6 +47,7 @@ import id.azkura.auth.ui.theme.Accent
 import id.azkura.auth.ui.theme.BgBase
 import id.azkura.auth.ui.theme.BgInput
 import id.azkura.auth.ui.theme.BorderMedium
+import id.azkura.auth.ui.theme.BgElevated
 import id.azkura.auth.ui.theme.Error
 import id.azkura.auth.ui.theme.TextMuted
 import id.azkura.auth.ui.theme.TextPrimary
@@ -147,9 +152,16 @@ fun EditAccountScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Secret (read-only)
+            // Secret (read-only, masked for privacy)
+            val maskedSecret = if (state.secret.length > 12) {
+                state.secret.take(8) + "..." + state.secret.takeLast(4)
+            } else if (state.secret.isNotEmpty()) {
+                state.secret.take(2) + "*".repeat((state.secret.length - 2).coerceAtLeast(0))
+            } else {
+                ""
+            }
             OutlinedTextField(
-                value = state.secret.take(8) + "..." + state.secret.takeLast(4),
+                value = maskedSecret,
                 onValueChange = {},
                 label = { Text("Secret key") },
                 readOnly = true,
@@ -158,6 +170,50 @@ fun EditAccountScreen(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+
+            var folderExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = folderExpanded,
+                onExpandedChange = { folderExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val selectedName = state.folders.find { it.id == state.folderId }?.name ?: "No folder"
+                OutlinedTextField(
+                    value = selectedName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Folder (optional)") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = folderExpanded) },
+                    colors = fieldColors,
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true).fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                )
+                ExposedDropdownMenu(
+                    expanded = folderExpanded,
+                    onDismissRequest = { folderExpanded = false },
+                    containerColor = BgElevated
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("No folder", color = TextPrimary) },
+                        onClick = {
+                            viewModel.onFolderChanged(null)
+                            folderExpanded = false
+                        }
+                    )
+                    state.folders.forEach { folder ->
+                        DropdownMenuItem(
+                            text = { Text(folder.name, color = TextPrimary) },
+                            onClick = {
+                                viewModel.onFolderChanged(folder.id)
+                                folderExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -172,9 +228,9 @@ fun EditAccountScreen(
                 shape = RoundedCornerShape(12.dp),
             )
 
-            if (state.error != null) {
+            state.error?.let { errorText ->
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(state.error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Text(errorText, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
 
             Spacer(modifier = Modifier.height(24.dp))

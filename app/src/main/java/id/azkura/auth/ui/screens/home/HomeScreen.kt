@@ -36,6 +36,13 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -91,8 +98,12 @@ fun HomeScreen(
     onLock: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
+    
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var newFolderName by remember { mutableStateOf("") }
+
 
     Scaffold(
         containerColor = BgBase,
@@ -170,31 +181,38 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(paddingValues),
         ) {
-            // Folder filter chips
-            if (state.folders.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(bottom = 8.dp),
-                ) {
-                    item {
-                        FolderChip(
-                            label = "All",
-                            color = Accent,
-                            selected = state.selectedFolderId == null,
-                            onClick = { viewModel.onFolderSelected(null) },
-                        )
-                    }
-                    items(state.folders) { folder ->
-                        FolderChip(
-                            label = folder.name,
-                            color = try { Color(folder.color.toColorInt()) } catch (_: Exception) { Accent },
-                            selected = state.selectedFolderId == folder.id,
-                            onClick = { viewModel.onFolderSelected(folder.id) },
-                        )
-                    }
+                        // Folder filter chips
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 8.dp),
+            ) {
+                item {
+                    FolderChip(
+                        label = "All",
+                        color = Accent,
+                        selected = state.selectedFolderId == null,
+                        onClick = { viewModel.onFolderSelected(null) },
+                    )
+                }
+                items(state.folders) { folder ->
+                    FolderChip(
+                        label = folder.name,
+                        color = try { Color(android.graphics.Color.parseColor(folder.color)) } catch (_: Exception) { Accent },
+                        selected = state.selectedFolderId == folder.id,
+                        onClick = { viewModel.onFolderSelected(folder.id) },
+                    )
+                }
+                item {
+                    FolderChip(
+                        label = "+ New Folder",
+                        color = id.azkura.auth.ui.theme.TextMuted,
+                        selected = false,
+                        onClick = { showCreateFolderDialog = true }
+                    )
                 }
             }
+
 
             if (state.accounts.isEmpty() && !state.isLoading) {
                 Box(
@@ -234,6 +252,37 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+
+        if (showCreateFolderDialog) {
+            AlertDialog(
+                onDismissRequest = { showCreateFolderDialog = false },
+                title = { Text("Create Folder") },
+                text = {
+                    OutlinedTextField(
+                        value = newFolderName,
+                        onValueChange = { newFolderName = it },
+                        label = { Text("Folder Name") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        if (newFolderName.isNotBlank()) {
+                            viewModel.onCreateFolder(newFolderName)
+                            newFolderName = ""
+                        }
+                        showCreateFolderDialog = false
+                    }) {
+                        Text("Create")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateFolderDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }

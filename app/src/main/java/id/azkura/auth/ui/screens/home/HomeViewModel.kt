@@ -125,7 +125,23 @@ class HomeViewModel @Inject constructor(
         refreshState()
     }
 
+
+    fun onCreateFolder(name: String) {
+        viewModelScope.launch {
+            val id = "folder_${System.currentTimeMillis()}"
+            val colors = arrayOf("#00E5FF", "#FF3D00", "#D500F9", "#00E676", "#1DE9B6", "#FFEA00")
+            val newFolder = Folder(
+                id = id,
+                name = name.trim(),
+                color = colors.random(),
+                order = _uiState.value.folders.size
+            )
+            accountRepository.addFolder(newFolder)
+        }
+    }
+
     fun onFolderSelected(folderId: String?) {
+
         _uiState.value = _uiState.value.copy(selectedFolderId = folderId)
         refreshState()
     }

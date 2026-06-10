@@ -22,6 +22,8 @@ data class AddAccountUiState(
     val algorithm: String = "SHA1",
     val digits: Int = 6,
     val period: Int = 30,
+    val folders: List<id.azkura.auth.data.model.Folder> = emptyList(),
+    val selectedFolderId: String? = null,
     val showAdvanced: Boolean = false,
     val error: String? = null,
     val isSaved: Boolean = false,
@@ -31,16 +33,30 @@ data class AddAccountUiState(
 class AddAccountViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddAccountUiState())
     val uiState: StateFlow<AddAccountUiState> = _uiState.asStateFlow()
 
     init {
-        // Check for scanned URI from scanner
-        savedStateHandle.get<String>("scanned_uri")?.let { uri ->
-            parseUri(uri)
+        viewModelScope.launch {
+            accountRepository.observeAllFolders().collect { folders ->
+                _uiState.value = _uiState.value.copy(folders = folders)
+            }
+        }
+
+        // Observe scanned URI results from ScannerScreen. The value is written
+        // after this ViewModel is already created, so a one-shot get() in init
+        // would miss normal scan flows.
+        viewModelScope.launch {
+            savedStateHandle.getStateFlow<String?>("scanned_uri", null)
+                .collect { uri ->
+                    if (uri != null) {
+                        parseUri(uri)
+                        savedStateHandle["scanned_uri"] = null
+                    }
+                }
         }
     }
 
@@ -70,6 +86,10 @@ class AddAccountViewModel @Inject constructor(
 
     fun onToggleAdvanced() {
         _uiState.value = _uiState.value.copy(showAdvanced = !_uiState.value.showAdvanced)
+    }
+
+    fun onFolderSelected(folderId: String?) {
+        _uiState.value = _uiState.value.copy(selectedFolderId = folderId)
     }
 
     fun parseUri(uri: String) {
@@ -106,6 +126,7 @@ class AddAccountViewModel @Inject constructor(
                     algorithm = state.algorithm,
                     digits = state.digits,
                     period = state.period,
+                    folderId = state.selectedFolderId,
                 )
                 accountRepository.addAccount(account)
 

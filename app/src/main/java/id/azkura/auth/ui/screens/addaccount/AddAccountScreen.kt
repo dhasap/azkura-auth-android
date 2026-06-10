@@ -55,6 +55,7 @@ import id.azkura.auth.ui.theme.BgBase
 import id.azkura.auth.ui.theme.BgCard
 import id.azkura.auth.ui.theme.BgInput
 import id.azkura.auth.ui.theme.BorderMedium
+import id.azkura.auth.ui.theme.BgElevated
 import id.azkura.auth.ui.theme.TextMuted
 import id.azkura.auth.ui.theme.TextPrimary
 import id.azkura.auth.ui.theme.TextSecondary
@@ -150,6 +151,50 @@ fun AddAccountScreen(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
             )
 
+            Spacer(modifier = Modifier.height(12.dp))
+
+            var folderExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = folderExpanded,
+                onExpandedChange = { folderExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                val selectedName = state.folders.find { it.id == state.selectedFolderId }?.name ?: "No folder"
+                OutlinedTextField(
+                    value = selectedName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Folder (optional)") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = folderExpanded) },
+                    colors = fieldColors,
+                    modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true).fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                )
+                ExposedDropdownMenu(
+                    expanded = folderExpanded,
+                    onDismissRequest = { folderExpanded = false },
+                    containerColor = BgElevated
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("No folder", color = TextPrimary) },
+                        onClick = {
+                            viewModel.onFolderSelected(null)
+                            folderExpanded = false
+                        }
+                    )
+                    state.folders.forEach { folder ->
+                        DropdownMenuItem(
+                            text = { Text(folder.name, color = TextPrimary) },
+                            onClick = {
+                                viewModel.onFolderSelected(folder.id)
+                                folderExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+
             Spacer(modifier = Modifier.height(16.dp))
 
             // Advanced toggle
@@ -226,10 +271,10 @@ fun AddAccountScreen(
             }
 
             // Error
-            if (state.error != null) {
+            state.error?.let { errorText ->
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = state.error!!,
+                    text = errorText,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
