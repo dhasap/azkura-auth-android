@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -35,6 +36,10 @@ class PreferencesManager @Inject constructor(
         val GOOGLE_USER_NAME = stringPreferencesKey("google_user_name")
         val GOOGLE_USER_EMAIL = stringPreferencesKey("google_user_email")
         val GOOGLE_USER_PICTURE = stringPreferencesKey("google_user_picture")
+        val GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
+        val GOOGLE_AUTH_TOKEN_TIME = longPreferencesKey("google_auth_token_time")
+        val ENCRYPT_BACKUP = booleanPreferencesKey("encrypt_backup")
+        val BACKUP_PASSWORD = stringPreferencesKey("backup_password")
         val FIRST_LAUNCH = booleanPreferencesKey("first_launch")
     }
 
@@ -50,7 +55,23 @@ class PreferencesManager @Inject constructor(
     val googleUserName: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_NAME] }
     val googleUserEmail: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_EMAIL] }
     val googleUserPicture: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_PICTURE] }
+    val googleAccessToken: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_ACCESS_TOKEN] }
+    val googleAuthTokenTime: Flow<Long?> = dataStore.data.map { it[Keys.GOOGLE_AUTH_TOKEN_TIME] }
     val isFirstLaunch: Flow<Boolean> = dataStore.data.map { it[Keys.FIRST_LAUNCH] ?: true }
+
+    val encryptBackup: Flow<Boolean> = dataStore.data.map { it[Keys.ENCRYPT_BACKUP] ?: false }
+    val backupPassword: Flow<String?> = dataStore.data.map { it[Keys.BACKUP_PASSWORD] }
+
+    suspend fun setEncryptBackup(enabled: Boolean) {
+        dataStore.edit { it[Keys.ENCRYPT_BACKUP] = enabled }
+    }
+
+    suspend fun setBackupPassword(password: String?) {
+        dataStore.edit {
+            if (password != null) it[Keys.BACKUP_PASSWORD] = password
+            else it.remove(Keys.BACKUP_PASSWORD)
+        }
+    }
 
     // ── Writes ───────────────────────────────────────────────────────────────
 
@@ -90,11 +111,42 @@ class PreferencesManager @Inject constructor(
         dataStore.edit { it[Keys.LAST_BACKUP_AT] = timestamp }
     }
 
-    suspend fun setGoogleUser(name: String, email: String, picture: String) {
+    suspend fun setGoogleUser(name: String, email: String, picture: String?) {
         dataStore.edit {
             it[Keys.GOOGLE_USER_NAME] = name
             it[Keys.GOOGLE_USER_EMAIL] = email
-            it[Keys.GOOGLE_USER_PICTURE] = picture
+            if (picture.isNullOrBlank()) {
+                it.remove(Keys.GOOGLE_USER_PICTURE)
+            } else {
+                it[Keys.GOOGLE_USER_PICTURE] = picture
+            }
+        }
+    }
+
+    suspend fun setGoogleAuthSession(
+        name: String,
+        email: String,
+        picture: String?,
+        accessToken: String,
+        tokenTimeMillis: Long,
+    ) {
+        dataStore.edit {
+            it[Keys.GOOGLE_USER_NAME] = name
+            it[Keys.GOOGLE_USER_EMAIL] = email
+            if (picture.isNullOrBlank()) {
+                it.remove(Keys.GOOGLE_USER_PICTURE)
+            } else {
+                it[Keys.GOOGLE_USER_PICTURE] = picture
+            }
+            it[Keys.GOOGLE_ACCESS_TOKEN] = accessToken
+            it[Keys.GOOGLE_AUTH_TOKEN_TIME] = tokenTimeMillis
+        }
+    }
+
+    suspend fun clearGoogleAccessToken() {
+        dataStore.edit {
+            it.remove(Keys.GOOGLE_ACCESS_TOKEN)
+            it.remove(Keys.GOOGLE_AUTH_TOKEN_TIME)
         }
     }
 
@@ -103,6 +155,8 @@ class PreferencesManager @Inject constructor(
             it.remove(Keys.GOOGLE_USER_NAME)
             it.remove(Keys.GOOGLE_USER_EMAIL)
             it.remove(Keys.GOOGLE_USER_PICTURE)
+            it.remove(Keys.GOOGLE_ACCESS_TOKEN)
+            it.remove(Keys.GOOGLE_AUTH_TOKEN_TIME)
         }
     }
 

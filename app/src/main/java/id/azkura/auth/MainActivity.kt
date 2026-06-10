@@ -16,10 +16,20 @@ import id.azkura.auth.ui.theme.BgBase
 import androidx.fragment.app.FragmentActivity
 
 import android.view.WindowManager
+import id.azkura.auth.data.local.crypto.VaultManager
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
     private val pendingOtpauthUri = mutableStateOf<String?>(null)
+
+
+    @Inject lateinit var vaultManager: VaultManager
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        vaultManager.lockVault()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)

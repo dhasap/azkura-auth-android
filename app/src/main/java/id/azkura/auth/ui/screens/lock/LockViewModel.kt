@@ -75,6 +75,10 @@ class LockViewModel @Inject constructor(
         }
     }
 
+    fun onBiometricError(message: String) {
+        _uiState.value = _uiState.value.copy(pin = "", error = message)
+    }
+
     private fun verifyPin(pin: String) {
         viewModelScope.launch {
             val storedHash = preferencesManager.pinHash.first()

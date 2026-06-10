@@ -1,5 +1,7 @@
 package id.azkura.auth.ui.screens.lock
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,13 +30,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import id.azkura.auth.ui.theme.Accent
 import id.azkura.auth.ui.theme.BgBase
@@ -43,6 +48,7 @@ import id.azkura.auth.ui.theme.BgElevated
 import id.azkura.auth.ui.theme.TextMuted
 import id.azkura.auth.ui.theme.TextPrimary
 import id.azkura.auth.ui.theme.TextSecondary
+import id.azkura.auth.util.BiometricHelper
 
 @Composable
 fun LockScreen(
@@ -50,17 +56,22 @@ fun LockScreen(
     viewModel: LockViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val activity = remember(context) { context.findFragmentActivity() }
 
     LaunchedEffect(state.isUnlocked) {
         if (state.isUnlocked) onUnlocked()
     }
 
-    if (state.isLoading || (!state.pinEnabled && !state.isUnlocked)) {
+    if (state.isLoading || state.isUnlocked || !state.pinEnabled) {
         Box(
             modifier = Modifier.fillMaxSize().background(BgBase),
             contentAlignment = Alignment.Center,
         ) {
-            Text("Loading...", color = TextSecondary)
+            Text(
+                text = if (state.isUnlocked) "Unlocking..." else "Loading...",
+                color = TextSecondary,
+            )
         }
         return
     }
@@ -137,7 +148,18 @@ fun LockScreen(
                         "bio" -> {
                             if (state.biometricEnabled) {
                                 IconButton(
-                                    onClick = { /* trigger biometric from Activity */ },
+                                    onClick = {
+                                        val resolvedActivity = activity
+                                        if (resolvedActivity == null) {
+                                            viewModel.onBiometricError("Biometric authentication is unavailable")
+                                            return@IconButton
+                                        }
+                                        BiometricHelper.authenticate(
+                                            activity = resolvedActivity,
+                                            onSuccess = viewModel::onBiometricSuccess,
+                                            onError = viewModel::onBiometricError,
+                                        )
+                                    },
                                     modifier = Modifier.size(72.dp),
                                 ) {
                                     Icon(
@@ -157,6 +179,7 @@ fun LockScreen(
                                 modifier = Modifier.size(72.dp),
                             ) {
                                 Icon(
+                                    @Suppress("DEPRECATION")
                                     Icons.Filled.Backspace,
                                     contentDescription = "Delete",
                                     tint = TextSecondary,
@@ -189,4 +212,10 @@ fun LockScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
     }
+}
+
+private tailrec fun Context.findFragmentActivity(): FragmentActivity? = when (this) {
+    is FragmentActivity -> this
+    is ContextWrapper -> baseContext.findFragmentActivity()
+    else -> null
 }

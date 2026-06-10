@@ -188,7 +188,7 @@ fun StatisticsScreen(
                                         .background(if (day.count > 0) Accent else BgElevated),
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(day.day, style = MaterialTheme.typography.labelSmall, color = TextMuted)
+                                Text(day.day, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                                 Text("${day.count}", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                             }
                         }

@@ -47,6 +47,12 @@ class AccountRepository @Inject constructor(
         dao.deleteAccountById(id)
     }
 
+    suspend fun insertAccounts(accounts: List<Account>) {
+        if (accounts.isNotEmpty()) {
+            dao.insertAccounts(accounts.map { it.toEntity() })
+        }
+    }
+
     suspend fun replaceAllAccounts(accounts: List<Account>) {
         dao.deleteAllAccounts()
         dao.insertAccounts(accounts.map { it.toEntity() })
@@ -64,6 +70,12 @@ class AccountRepository @Inject constructor(
 
     suspend fun addFolder(folder: Folder) {
         dao.insertFolder(folder.toEntity())
+    }
+
+    suspend fun insertFolders(folders: List<Folder>) {
+        if (folders.isNotEmpty()) {
+            dao.insertFolders(folders.map { it.toEntity() })
+        }
     }
 
     suspend fun updateFolder(folder: Folder) {

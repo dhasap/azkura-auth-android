@@ -39,18 +39,19 @@ class VaultManager @Inject constructor(
     }
 
     /**
-     * Save current accounts to encrypted vault.
-     * Called after any account modification while unlocked.
+     * Snapshot current accounts into an encrypted blob.
+     *
+     * Room is the operational source of truth, so this does NOT write back to
+     * the database. The returned encrypted string is useful for callers that
+     * want to persist or upload a backup (e.g. Google Drive, local file export).
+     *
+     * @return The encrypted vault blob, or null if the vault is locked.
      */
-    suspend fun saveVault() {
-        val password = currentPassword ?: return
+    suspend fun saveVault(): String? {
+        val password = currentPassword ?: return null
         val accounts = accountRepository.getAllAccounts()
-        // Vault is stored as encrypted JSON in the database
-        // For cross-platform compatibility, the encryption format matches the extension
         val plaintext = json.encodeToString(accounts)
-        val encrypted = cryptoManager.encrypt(plaintext, password)
-        // The encrypted vault could be stored separately if needed for backup
-        // For now, accounts are stored directly in Room (already encrypted at DB level)
+        return cryptoManager.encrypt(plaintext, password)
     }
 
     /**

@@ -1,6 +1,7 @@
 package id.azkura.auth.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -18,6 +19,8 @@ import id.azkura.auth.ui.screens.statistics.StatisticsScreen
 fun AzkuraNavGraph(
     navController: NavHostController,
     startDestination: String = Screen.Lock.route,
+    pendingOtpauthUri: String? = null,
+    onPendingOtpauthUriConsumed: () -> Unit = {},
 ) {
     NavHost(
         navController = navController,
@@ -34,10 +37,27 @@ fun AzkuraNavGraph(
         }
 
         composable(Screen.Home.route) {
+            LaunchedEffect(pendingOtpauthUri) {
+                if (!pendingOtpauthUri.isNullOrBlank()) {
+                    navController.navigate(Screen.AddAccount.route)
+                    navController.currentBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("scanned_uri", pendingOtpauthUri)
+                    onPendingOtpauthUriConsumed()
+                }
+            }
+
             HomeScreen(
                 onNavigateToAdd = { navController.navigate(Screen.AddAccount.route) },
                 onNavigateToEdit = { id -> navController.navigate(Screen.EditAccount.createRoute(id)) },
-                onNavigateToScanner = { navController.navigate(Screen.Scanner.route) },
+                // Put AddAccount under Scanner so the scanned URI is returned to
+                // AddAccount's SavedStateHandle. Navigating directly to Scanner
+                // from Home would return the value to Home, which does not
+                // consume scanned_uri.
+                onNavigateToScanner = {
+                    navController.navigate(Screen.AddAccount.route)
+                    navController.navigate(Screen.Scanner.route)
+                },
                 onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                 onNavigateToStats = { navController.navigate(Screen.Statistics.route) },
                 onLock = {
