@@ -105,9 +105,13 @@ fun ScannerScreen(
             } else {
                 val previewView = remember { PreviewView(context) }
                 val executor = remember { Executors.newSingleThreadExecutor() }
+                val barcodeScanner = remember { BarcodeScanning.getClient() }
 
                 DisposableEffect(Unit) {
-                    onDispose { executor.shutdown() }
+                    onDispose {
+                        executor.shutdown()
+                        barcodeScanner.close()
+                    }
                 }
 
                 AndroidView(
@@ -135,18 +139,13 @@ fun ScannerScreen(
                                             mediaImage,
                                             imageProxy.imageInfo.rotationDegrees,
                                         )
-                                        val scanner = BarcodeScanning.getClient()
-                                        scanner.process(image)
+                                        barcodeScanner.process(image)
                                             .addOnSuccessListener { barcodes ->
                                                 for (barcode in barcodes) {
-                                                    if (barcode.valueType == Barcode.TYPE_TEXT ||
-                                                        barcode.valueType == Barcode.TYPE_URL
-                                                    ) {
-                                                        val value = barcode.rawValue ?: continue
-                                                        if (value.startsWith("otpauth://") && !hasScanned) {
-                                                            hasScanned = true
-                                                            onAccountScanned(value)
-                                                        }
+                                                    val value = barcode.rawValue ?: continue
+                                                    if (value.startsWith("otpauth://", ignoreCase = true) && !hasScanned) {
+                                                        hasScanned = true
+                                                        onAccountScanned(value)
                                                     }
                                                 }
                                             }

@@ -26,7 +26,7 @@ object UriParser {
      */
     fun parse(uri: String): ParsedAccount {
         val trimmed = uri.trim()
-        require(trimmed.startsWith("otpauth://")) { "Invalid URI: must start with otpauth://" }
+        require(trimmed.startsWith("otpauth://", ignoreCase = true)) { "Invalid URI: must start with otpauth://" }
 
         val parsed = Uri.parse(trimmed)
 
@@ -58,8 +58,8 @@ object UriParser {
         val secret = parsed.getQueryParameter("secret")?.replace("\\s".toRegex(), "")?.uppercase()
             ?: throw IllegalArgumentException("Missing required parameter: secret")
         val queryIssuer = parsed.getQueryParameter("issuer")?.trim() ?: ""
-        if (queryIssuer.isNotEmpty() && issuer.isEmpty()) issuer = queryIssuer
-        if (issuer.isEmpty() && queryIssuer.isNotEmpty()) issuer = queryIssuer
+        // Match the extension: the issuer query parameter overrides the label issuer.
+        if (queryIssuer.isNotEmpty()) issuer = queryIssuer
 
         val algorithm = parsed.getQueryParameter("algorithm")?.uppercase() ?: "SHA1"
         val digits = parsed.getQueryParameter("digits")?.toIntOrNull() ?: 6
@@ -68,9 +68,13 @@ object UriParser {
         require(digits in 1..10) { "Digits must be between 1 and 10" }
         require(period in 1..300) { "Period must be between 1 and 300" }
 
+        val resolvedIssuer = issuer.ifEmpty {
+            account.substringAfter('@', missingDelimiterValue = "").ifEmpty { "Unknown" }
+        }
+
         return ParsedAccount(
             type = type,
-            issuer = issuer,
+            issuer = resolvedIssuer,
             account = account,
             secret = secret,
             algorithm = algorithm,
