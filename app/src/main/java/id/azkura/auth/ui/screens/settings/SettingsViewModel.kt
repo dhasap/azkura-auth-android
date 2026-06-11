@@ -12,6 +12,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import id.azkura.auth.data.local.crypto.CryptoManager
 import id.azkura.auth.data.local.crypto.VaultManager
 import id.azkura.auth.data.local.prefs.PreferencesManager
+import id.azkura.auth.data.local.prefs.SortOrder
 import id.azkura.auth.data.remote.GoogleAuthService
 import id.azkura.auth.data.remote.GoogleAuthorizationOutcome
 import id.azkura.auth.data.remote.GoogleDriveAuthException
@@ -22,6 +23,7 @@ import id.azkura.auth.util.LocalBackupManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -33,7 +35,7 @@ data class SettingsUiState(
     val biometricEnabled: Boolean = false,
     val biometricAvailable: Boolean = false,
     val autoLockMinutes: Int = 5,
-    val sortOrder: String = "custom",
+    val sortOrder: SortOrder = SortOrder.DEFAULT,
     val googleUserName: String? = null,
     val googleUserEmail: String? = null,
     val googleUserPicture: String? = null,
@@ -75,6 +77,11 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch { refreshState() }
+        viewModelScope.launch {
+            preferencesManager.sortOrder.collectLatest { sortOrder ->
+                _uiState.value = _uiState.value.copy(sortOrder = sortOrder)
+            }
+        }
     }
 
     fun onSetupPin(pin: String) {
@@ -154,7 +161,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onSortOrderChanged(order: String) {
+    fun onSortOrderChanged(order: SortOrder) {
         viewModelScope.launch {
             preferencesManager.setSortOrder(order)
             _uiState.value = _uiState.value.copy(sortOrder = order)
@@ -260,17 +267,18 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onExportLocalBackup() {
+    fun onExportVaultFile() {
         _uiState.value = _uiState.value.copy(pendingExportUri = true)
     }
 
-    fun onExportLocalBackupTo(uri: Uri) {
+    fun onExportVaultFileTo(uri: Uri) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(pendingExportUri = false)
             try {
-                val result = localBackupManager.exportToUri(uri)
+                val encrypted = vaultManager.exportVault()
+                val result = localBackupManager.exportVaultToUri(uri, encrypted)
                 _uiState.value = _uiState.value.copy(
-                    localBackupMessage = "Exported ${result.accountCount} account(s) and ${result.folderCount} folder(s) to ${result.fileName}",
+                    localBackupMessage = "Saved encrypted .vault with ${result.accountCount} account(s) and ${result.folderCount} folder(s) to ${result.fileName}",
                 )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -280,18 +288,46 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onExportLocalBackupCancelled() {
+    fun onExportVaultFileCancelled() {
         _uiState.value = _uiState.value.copy(pendingExportUri = false)
     }
+
+    fun onShareVaultText() {
+        viewModelScope.launch {
+            try {
+                val encrypted = vaultManager.exportVault()
+                _uiState.value = _uiState.value.copy(exportResult = encrypted)
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    localBackupMessage = "Export failed: ${e.message}",
+                )
+            }
+        }
+    }
+
+    // Backward-compatible aliases for older UI wiring/tests.
+    fun onExportLocalBackup() = onExportVaultFile()
+    fun onExportLocalBackupTo(uri: Uri) = onExportVaultFileTo(uri)
+    fun onExportLocalBackupCancelled() = onExportVaultFileCancelled()
+    fun onExportVault() = onShareVaultText()
 
     fun onImportLocalBackup(uri: Uri) {
         viewModelScope.launch {
             try {
-                val result = localBackupManager.importFromUri(uri)
-                refreshState()
-                _uiState.value = _uiState.value.copy(
-                    localBackupMessage = "Imported ${result.importedAccounts} account(s) and ${result.importedFolders} folder(s) from ${result.fileName}",
-                )
+                val textResult = localBackupManager.readTextFromUri(uri)
+                if (textResult.content.trimStart().startsWith("{")) {
+                    val result = localBackupManager.importFromUri(uri)
+                    refreshState()
+                    _uiState.value = _uiState.value.copy(
+                        localBackupMessage = "Imported ${result.importedAccounts} account(s) and ${result.importedFolders} folder(s) from ${result.fileName}",
+                    )
+                } else {
+                    val result = vaultManager.importVaultDetailed(textResult.content.trim())
+                    refreshState()
+                    _uiState.value = _uiState.value.copy(
+                        localBackupMessage = "Imported encrypted .vault from ${textResult.fileName}: ${result.accountCount} account(s) and ${result.folderCount} folder(s)",
+                    )
+                }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     localBackupMessage = "Import failed: ${e.message}",
@@ -302,17 +338,6 @@ class SettingsViewModel @Inject constructor(
 
     fun clearLocalBackupMessage() {
         _uiState.value = _uiState.value.copy(localBackupMessage = null)
-    }
-
-    fun onExportVault() {
-        viewModelScope.launch {
-            try {
-                val encrypted = vaultManager.exportVault()
-                _uiState.value = _uiState.value.copy(exportResult = encrypted)
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(exportResult = "Error: ${e.message}")
-            }
-        }
     }
 
     fun clearExportResult() {

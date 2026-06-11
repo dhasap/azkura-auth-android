@@ -46,11 +46,11 @@ object UriParser {
         val rawPath = parsed.path?.removePrefix("/") ?: ""
         val labelRaw = Uri.decode(rawPath)
 
-        var issuer = ""
+        var labelIssuer = ""
         var account = labelRaw
         if (labelRaw.contains(":")) {
             val colonIndex = labelRaw.indexOf(':')
-            issuer = labelRaw.substring(0, colonIndex).trim()
+            labelIssuer = labelRaw.substring(0, colonIndex).trim()
             account = labelRaw.substring(colonIndex + 1).trim()
         }
 
@@ -58,8 +58,15 @@ object UriParser {
         val secret = parsed.getQueryParameter("secret")?.replace("\\s".toRegex(), "")?.uppercase()
             ?: throw IllegalArgumentException("Missing required parameter: secret")
         val queryIssuer = parsed.getQueryParameter("issuer")?.trim() ?: ""
-        // Match the extension: the issuer query parameter overrides the label issuer.
-        if (queryIssuer.isNotEmpty()) issuer = queryIssuer
+        // Hierarchy of truth for otpauth identity:
+        // 1. The explicit query parameter is the most reliable source.
+        // 2. If it is missing, use the label prefix before ':' (Issuer:Account).
+        // 3. Never promote an account email domain (for example gmail.com) into an issuer.
+        val issuer = when {
+            queryIssuer.isNotEmpty() -> queryIssuer
+            labelIssuer.isNotEmpty() -> labelIssuer
+            else -> ""
+        }
 
         val algorithm = parsed.getQueryParameter("algorithm")?.uppercase() ?: "SHA1"
         val digits = parsed.getQueryParameter("digits")?.toIntOrNull() ?: 6
@@ -68,13 +75,9 @@ object UriParser {
         require(digits in 1..10) { "Digits must be between 1 and 10" }
         require(period in 1..300) { "Period must be between 1 and 300" }
 
-        val resolvedIssuer = issuer.ifEmpty {
-            account.substringAfter('@', missingDelimiterValue = "").ifEmpty { "Unknown" }
-        }
-
         return ParsedAccount(
             type = type,
-            issuer = resolvedIssuer,
+            issuer = issuer,
             account = account,
             secret = secret,
             algorithm = algorithm,

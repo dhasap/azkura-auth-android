@@ -50,7 +50,9 @@ class PreferencesManager @Inject constructor(
     val pinSalt: Flow<String?> = dataStore.data.map { it[Keys.PIN_SALT] }
     val biometricEnabled: Flow<Boolean> = dataStore.data.map { it[Keys.BIOMETRIC_ENABLED] ?: false }
     val autoLockMinutes: Flow<Int> = dataStore.data.map { it[Keys.AUTO_LOCK_MINUTES] ?: 5 }
-    val sortOrder: Flow<String> = dataStore.data.map { it[Keys.SORT_ORDER] ?: "custom" }
+    val sortOrder: Flow<SortOrder> = dataStore.data.map { preferences ->
+        SortOrder.fromStoredValue(preferences[Keys.SORT_ORDER])
+    }
     val lastBackupAt: Flow<String?> = dataStore.data.map { it[Keys.LAST_BACKUP_AT] }
     val googleUserName: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_NAME] }
     val googleUserEmail: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_EMAIL] }
@@ -103,8 +105,12 @@ class PreferencesManager @Inject constructor(
         dataStore.edit { it[Keys.AUTO_LOCK_MINUTES] = minutes }
     }
 
+    suspend fun setSortOrder(order: SortOrder) {
+        dataStore.edit { it[Keys.SORT_ORDER] = order.storedValue }
+    }
+
     suspend fun setSortOrder(order: String) {
-        dataStore.edit { it[Keys.SORT_ORDER] = order }
+        setSortOrder(SortOrder.fromStoredValue(order))
     }
 
     suspend fun setLastBackupAt(timestamp: String) {

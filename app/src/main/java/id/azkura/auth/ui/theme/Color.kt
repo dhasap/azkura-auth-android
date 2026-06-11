@@ -13,12 +13,12 @@ val AccentDim = Color(0x2600E5FF)    // ~15% alpha
 val AccentDim2 = Color(0x1400E5FF)   // ~8% alpha
 
 // ── Backgrounds ──────────────────────────────────────────────────────────────
-val BgBase = Color(0xFF0F172A)
-val BgCard = Color(0xFF1E293B)
-val BgCardHover = Color(0xFF334155)
-val BgElevated = Color(0xFF1E293B)
-val BgInput = Color(0xFF0F172A)
-val BgModal = Color(0xFF0F172A)
+val BgBase = Color(0xFF121212)
+val BgCard = Color(0xFF1E1E1E)
+val BgCardHover = Color(0xFF2A2A2A)
+val BgElevated = Color(0xFF242424)
+val BgInput = Color(0xFF1A1A1A)
+val BgModal = Color(0xFF202020)
 
 // ── Text ─────────────────────────────────────────────────────────────────────
 val TextPrimary = Color(0xFFFFFFFF)

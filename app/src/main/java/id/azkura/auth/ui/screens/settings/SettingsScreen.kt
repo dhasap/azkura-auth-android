@@ -3,9 +3,11 @@ package id.azkura.auth.ui.screens.settings
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,55 +19,67 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.foundation.layout.Column
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import id.azkura.auth.BuildConfig
+import id.azkura.auth.data.local.prefs.SortOrder
 import id.azkura.auth.ui.theme.Accent
+import id.azkura.auth.ui.theme.AccentDim2
 import id.azkura.auth.ui.theme.BgBase
+import id.azkura.auth.ui.theme.BgElevated
 import id.azkura.auth.ui.theme.BorderMedium
+import id.azkura.auth.ui.theme.Error
 import id.azkura.auth.ui.theme.TextMuted
 import id.azkura.auth.ui.theme.TextPrimary
 import id.azkura.auth.ui.theme.TextSecondary
 import id.azkura.auth.util.ClipboardHelper
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,8 +90,10 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+    var showSortOrderSheet by remember { mutableStateOf(false) }
 
-    // SAF file picker for importing local backup
     val importFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -86,14 +102,13 @@ fun SettingsScreen(
         }
     }
 
-    // SAF file creator for exporting local backup
-    val exportFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
+    val exportVaultFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri ->
         if (uri != null) {
-            viewModel.onExportLocalBackupTo(uri)
+            viewModel.onExportVaultFileTo(uri)
         } else {
-            viewModel.onExportLocalBackupCancelled()
+            viewModel.onExportVaultFileCancelled()
         }
     }
 
@@ -126,10 +141,9 @@ fun SettingsScreen(
             val timestamp = java.time.Instant.now()
                 .atZone(java.time.ZoneOffset.UTC)
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss"))
-            exportFileLauncher.launch("azkura-backup-$timestamp.json")
+            exportVaultFileLauncher.launch("azkura-vault-$timestamp.vault")
         }
     }
-
 
     if (state.showBackupPasswordDialog) {
         var pwd by remember { mutableStateOf("") }
@@ -138,23 +152,44 @@ fun SettingsScreen(
             title = { Text("Backup Password") },
             text = {
                 Column {
-                    Text("Jika Anda lupa password ini, data backup tidak dapat dipulihkan.", color = id.azkura.auth.ui.theme.Error, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Jika Anda lupa password ini, data backup tidak dapat dipulihkan.",
+                        color = Error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                     OutlinedTextField(
                         value = pwd,
                         onValueChange = { pwd = it },
                         label = { Text("Master Password") },
                         singleLine = true,
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                        visualTransformation = PasswordVisualTransformation(),
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.onSetBackupPassword(pwd) }) { Text("Set Password", color = Accent) }
+                TextButton(onClick = { viewModel.onSetBackupPassword(pwd) }) {
+                    Text("Set Password", color = Accent)
+                }
             },
             dismissButton = {
                 TextButton(onClick = viewModel::onDismissBackupPasswordDialog) { Text("Cancel") }
-            }
+            },
+        )
+    }
+
+    if (showSortOrderSheet) {
+        SortOrderBottomSheet(
+            selectedOrder = state.sortOrder,
+            sheetState = bottomSheetState,
+            onDismiss = { showSortOrderSheet = false },
+            onOrderSelected = { order ->
+                viewModel.onSortOrderChanged(order)
+                coroutineScope.launch {
+                    bottomSheetState.hide()
+                    showSortOrderSheet = false
+                }
+            },
         )
     }
 
@@ -162,23 +197,41 @@ fun SettingsScreen(
         AlertDialog(
             onDismissRequest = viewModel::hideExportDialog,
             title = { Text("Export Data") },
-            text = { Text("Pilih format penyimpanan.") },
+            text = {
+                Column {
+                    Text(
+                        "Pilih mode ekspor vault terenkripsi.",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "• Simpan sebagai file .vault untuk backup lewat file manager.\n" +
+                            "• Bagikan kode teks jika ingin mengirim payload terenkripsi secara manual.",
+                        color = TextMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.hideExportDialog()
-                    viewModel.onExportVault()
-                }) { Text("Vault (Encrypted)", color = Accent) }
+                    viewModel.onExportVaultFile()
+                }) {
+                    Text("Simpan File (.vault)", color = Accent)
+                }
             },
             dismissButton = {
                 TextButton(onClick = {
                     viewModel.hideExportDialog()
-                    viewModel.onExportLocalBackup()
-                }) { Text("JSON (Unencrypted)") }
-            }
+                    viewModel.onShareVaultText()
+                }) {
+                    Text("Bagikan Kode Teks")
+                }
+            },
         )
     }
 
-    // PIN setup dialog
     if (state.showSetPinDialog) {
         var newPin by remember { mutableStateOf("") }
         AlertDialog(
@@ -193,6 +246,7 @@ fun SettingsScreen(
                         onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) newPin = it },
                         label = { Text("PIN") },
                         singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Accent,
                             unfocusedBorderColor = BorderMedium,
@@ -216,9 +270,7 @@ fun SettingsScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = viewModel::onDismissPinDialog) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = viewModel::onDismissPinDialog) { Text("Cancel") }
             },
         )
     }
@@ -226,27 +278,41 @@ fun SettingsScreen(
     state.exportResult?.let { exportText ->
         AlertDialog(
             onDismissRequest = viewModel::clearExportResult,
-            title = { Text("Export Vault") },
+            title = { Text("Bagikan Kode Vault") },
             text = {
                 Text(
-                    text = exportText,
+                    text = "Kode vault terenkripsi sudah siap. Gunakan Share untuk mengirim sebagai teks, atau Copy untuk menyalin ke clipboard.",
                     color = TextSecondary,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             },
             confirmButton = {
+                TextButton(
+                    onClick = {
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, "Azkura Auth encrypted vault")
+                            putExtra(Intent.EXTRA_TEXT, exportText)
+                        }
+                        val chooser = Intent.createChooser(shareIntent, "Bagikan Kode Vault")
+                        if (context !is Activity) {
+                            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(chooser)
+                        viewModel.clearExportResult()
+                    },
+                ) {
+                    Text("Share", color = Accent)
+                }
+            },
+            dismissButton = {
                 TextButton(
                     onClick = {
                         ClipboardHelper.copy(context, "Azkura Auth vault export", exportText)
                         viewModel.clearExportResult()
                     },
                 ) {
-                    Text("Copy", color = Accent)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::clearExportResult) {
-                    Text("Close")
+                    Text("Copy")
                 }
             },
         )
@@ -274,7 +340,7 @@ fun SettingsScreen(
     state.localBackupMessage?.let { backupMsg ->
         AlertDialog(
             onDismissRequest = viewModel::clearLocalBackupMessage,
-            title = { Text("Local Backup") },
+            title = { Text("Backup / Export") },
             text = {
                 Text(
                     text = backupMsg,
@@ -310,7 +376,6 @@ fun SettingsScreen(
                 .padding(paddingValues)
                 .verticalScroll(rememberScrollState()),
         ) {
-            // ── Security section ──
             SectionHeader("Security")
 
             SettingsItem(
@@ -361,7 +426,6 @@ fun SettingsScreen(
                 subtitle = "${state.autoLockMinutes} minutes",
             )
 
-            // ── Backup section ──
             SectionHeader("Backup")
 
             SettingsItem(
@@ -417,7 +481,7 @@ fun SettingsScreen(
             SettingsItem(
                 icon = Icons.Default.Lock,
                 title = "Encrypt Backup Data (Advanced)",
-                subtitle = "Password required for restore",
+                subtitle = if (state.encryptBackup) "Enabled — password required for restore" else "Off — Drive backup is seamless JSON",
                 trailing = {
                     Switch(
                         checked = state.encryptBackup,
@@ -427,47 +491,120 @@ fun SettingsScreen(
                             checkedTrackColor = Accent.copy(alpha = 0.3f),
                         ),
                     )
-                }
+                },
             )
 
             SettingsItem(
-                icon = Icons.Default.Share,
+                icon = Icons.Default.FileUpload,
                 title = "Export Data",
-                subtitle = "Export JSON or Vault",
+                subtitle = "Simpan file .vault atau bagikan kode teks",
                 onClick = viewModel::showExportDialog,
             )
 
             SettingsItem(
                 icon = Icons.Default.FileDownload,
                 title = "Import from File",
-                subtitle = "Restore from JSON backup file",
+                subtitle = "Restore from JSON backup or encrypted .vault",
                 onClick = {
-                    importFileLauncher.launch(arrayOf("application/json", "*/*"))
+                    importFileLauncher.launch(arrayOf("application/json", "application/octet-stream", "*/*"))
                 },
             )
 
-            // ── Display section ──
             SectionHeader("Display")
 
-            @Suppress("DEPRECATION")
-            val sortIcon = Icons.Filled.Sort
             SettingsItem(
-                icon = sortIcon,
+                icon = Icons.AutoMirrored.Filled.Sort,
                 title = "Sort Order",
-                subtitle = state.sortOrder.replaceFirstChar { it.uppercase() },
+                subtitle = state.sortOrder.label,
+                onClick = { showSortOrderSheet = true },
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Version info
             Text(
-                text = "Azkura Auth v2.1.5",
+                text = "Azkura Auth v${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextMuted,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
 
             Spacer(modifier = Modifier.height(40.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SortOrderBottomSheet(
+    selectedOrder: SortOrder,
+    sheetState: SheetState,
+    onDismiss: () -> Unit,
+    onOrderSelected: (SortOrder) -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = BgElevated,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
+        ) {
+            Text(
+                text = "Sort Order",
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+            HorizontalDivider(color = BorderMedium)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            SortOrder.entries.forEach { option ->
+                SortOrderOptionRow(
+                    option = option,
+                    selected = option == selectedOrder,
+                    onClick = { onOrderSelected(option) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SortOrderOptionRow(
+    option: SortOrder,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val textColor = if (selected) Accent else TextSecondary
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) AccentDim2 else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = option.label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = textColor,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "Selected",
+                tint = Accent,
+                modifier = Modifier.size(22.dp),
+            )
+        } else {
+            Spacer(modifier = Modifier.size(22.dp))
         }
     }
 }

@@ -1,5 +1,6 @@
 package id.azkura.auth.data.remote
 
+import id.azkura.auth.BuildConfig
 import id.azkura.auth.data.local.prefs.PreferencesManager
 import id.azkura.auth.data.local.crypto.CryptoManager
 import kotlinx.coroutines.flow.first
@@ -399,7 +400,7 @@ class GoogleDriveService @Inject constructor(
 
     companion object {
         private const val APP_NAME = "azkura-auth"
-        private const val APP_VERSION = "2.1.5"
+        private val APP_VERSION: String get() = BuildConfig.VERSION_NAME
         private const val MIME_TYPE = "application/json"
         private const val MAX_BACKUP_BYTES = 1024 * 1024
         private const val MAX_ACCOUNTS = 1000
@@ -475,7 +476,7 @@ private data class DriveFileMetadata(
 @Serializable
 private data class DriveBackupData(
     val app: String = "azkura-auth",
-    val version: String = "2.1.5",
+    val version: String = BuildConfig.VERSION_NAME,
     val exportedAt: String = "",
     val accountCount: Int = 0,
     val folderCount: Int = 0,

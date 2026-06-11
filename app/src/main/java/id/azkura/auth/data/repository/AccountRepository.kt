@@ -43,6 +43,12 @@ class AccountRepository @Inject constructor(
         dao.updateAccount(account.toEntity())
     }
 
+    suspend fun updateAccounts(accounts: List<Account>) {
+        if (accounts.isNotEmpty()) {
+            dao.updateAccounts(accounts.map { it.toEntity() })
+        }
+    }
+
     suspend fun deleteAccount(id: String) {
         dao.deleteAccountById(id)
     }

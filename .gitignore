@@ -1,27 +1,70 @@
-# Built APK and build outputs
-/app/build/
-/build/
-
-# Gradle
+# Gradle and Android build outputs
 .gradle/
+.kotlin/
+build/
+app/build/
+**/build/
+
+# Local Android SDK and machine-specific config
 local.properties
-
-# IDE
-.idea/
 *.iml
+.idea/
 
-# OS
-.DS_Store
-Thumbs.db
-
-# Kotlin
-*.class
-
-# Signing
+# Signing keys and release credentials
 keystore.properties
 *.jks
 *.keystore
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
 
-# Room schema exports (keep in repo for migrations)
-# /app/schemas/
-.kotlin/
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+secrets.properties
+secret.properties
+credentials.properties
+credentials.json
+service-account*.json
+*-service-account.json
+google-services.json
+firebase-debug.log
+
+# Generated release artifacts: publish binaries through GitHub Releases, not git
+artifacts/*.apk
+artifacts/*.aab
+artifacts/*.apks
+artifacts/*.idsig
+artifacts/*.mapping
+*.apk
+*.aab
+*.apks
+*.idsig
+*.mapping
+
+# Android/Java/Kotlin generated files
+captures/
+.externalNativeBuild/
+.cxx/
+*.class
+*.dex
+hs_err_pid*
+
+# Test and tooling outputs
+coverage/
+reports/
+test-results/
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+
+# Keep Room schemas in git when migrations are added
+# app/schemas/

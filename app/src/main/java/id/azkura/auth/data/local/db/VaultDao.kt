@@ -5,6 +5,7 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import id.azkura.auth.data.model.AccountEntity
 import id.azkura.auth.data.model.FolderEntity
@@ -38,6 +39,10 @@ interface VaultDao {
 
     @Update
     suspend fun updateAccount(account: AccountEntity)
+
+    @Transaction
+    @Update
+    suspend fun updateAccounts(accounts: List<AccountEntity>)
 
     @Delete
     suspend fun deleteAccount(account: AccountEntity)

@@ -55,8 +55,8 @@ android {
         applicationId = "id.azkura.auth"
         minSdk = 26
         targetSdk = 35
-        versionCode = 230
-        versionName = "2.3.0"
+        versionCode = 291
+        versionName = "2.9.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -80,6 +80,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

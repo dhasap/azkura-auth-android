@@ -3,6 +3,7 @@ package id.azkura.auth.util
 import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
+import id.azkura.auth.BuildConfig
 import id.azkura.auth.data.model.Account
 import id.azkura.auth.data.model.Folder
 import id.azkura.auth.data.repository.AccountRepository
@@ -37,33 +38,68 @@ class LocalBackupManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val accountRepository: AccountRepository,
 ) {
-    /** Export vault to a user-chosen URI via SAF (Storage Access Framework). */
+    /** Export vault backup JSON to a user-chosen URI via SAF (Storage Access Framework). */
     suspend fun exportToUri(uri: Uri): LocalBackupExportResult = withContext(Dispatchers.IO) {
         val accounts = accountRepository.getAllAccounts()
         val folders = accountRepository.getAllFolders()
         val now = Instant.now()
-        val fileName = "azkura-backup-${FILE_TIMESTAMP_FORMAT.format(now)}.json"
+        val fileName = getFileNameFromUri(uri).ifBlank {
+            "azkura-backup-${FILE_TIMESTAMP_FORMAT.format(now)}.json"
+        }
+        val content = buildBackupJson(accounts, folders, now)
 
-        val backup = LocalBackupData(
-            app = APP_NAME,
-            version = APP_VERSION,
-            exportedAt = now.toString(),
-            accountCount = accounts.size,
-            folderCount = folders.size,
-            accounts = accounts,
-            folders = folders,
-        )
-        val content = BACKUP_JSON.encodeToString(backup)
-
-        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
-            outputStream.write(content.toByteArray(Charsets.UTF_8))
-        } ?: throw IOException("Unable to write to the selected file")
+        writeTextToUri(uri, content)
 
         LocalBackupExportResult(
             fileName = fileName,
             accountCount = accounts.size,
             folderCount = folders.size,
         )
+    }
+
+    /** Export encrypted .vault content to a user-chosen URI. */
+    suspend fun exportVaultToUri(uri: Uri, encryptedVault: String): LocalBackupExportResult = withContext(Dispatchers.IO) {
+        val accounts = accountRepository.getAllAccounts()
+        val folders = accountRepository.getAllFolders()
+        val now = Instant.now()
+        val fileName = getFileNameFromUri(uri).ifBlank {
+            "azkura-vault-${FILE_TIMESTAMP_FORMAT.format(now)}.vault"
+        }
+
+        writeTextToUri(uri, encryptedVault)
+
+        LocalBackupExportResult(
+            fileName = fileName,
+            accountCount = accounts.size,
+            folderCount = folders.size,
+        )
+    }
+
+    private fun buildBackupJson(accounts: List<Account>, folders: List<Folder>, exportedAt: Instant): String {
+        val backup = LocalBackupData(
+            app = APP_NAME,
+            version = APP_VERSION,
+            exportedAt = exportedAt.toString(),
+            accountCount = accounts.size,
+            folderCount = folders.size,
+            accounts = accounts,
+            folders = folders,
+        )
+        return BACKUP_JSON.encodeToString(backup)
+    }
+
+    private fun writeTextToUri(uri: Uri, content: String) {
+        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+            outputStream.write(content.toByteArray(Charsets.UTF_8))
+        } ?: throw IOException("Unable to write to the selected file")
+    }
+
+    /** Read a user-chosen text file with the same safety limit used by backups. */
+    suspend fun readTextFromUri(uri: Uri): LocalBackupTextResult = withContext(Dispatchers.IO) {
+        val content = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            inputStream.readUtf8WithLimit(MAX_BACKUP_BYTES)
+        } ?: throw IOException("Unable to read the selected file")
+        LocalBackupTextResult(fileName = getFileNameFromUri(uri), content = content)
     }
 
     /** Import vault from a user-chosen local JSON backup file. */
@@ -262,7 +298,7 @@ class LocalBackupManager @Inject constructor(
 
     companion object {
         private const val APP_NAME = "azkura-auth"
-        private const val APP_VERSION = "2.1.5"
+        private val APP_VERSION: String get() = BuildConfig.VERSION_NAME
         private const val MAX_BACKUP_BYTES = 1024 * 1024
         private const val MAX_ACCOUNTS = 1000
         private const val MAX_FOLDERS = 100
@@ -289,6 +325,11 @@ data class LocalBackupExportResult(
     val folderCount: Int,
 )
 
+data class LocalBackupTextResult(
+    val fileName: String,
+    val content: String,
+)
+
 data class LocalBackupImportResult(
     val fileName: String,
     val importedAccounts: Int,
@@ -304,7 +345,7 @@ private data class FolderMergeResult(
 @Serializable
 private data class LocalBackupData(
     val app: String = "azkura-auth",
-    val version: String = "2.3.0",
+    val version: String = BuildConfig.VERSION_NAME,
     val exportedAt: String = "",
     val accountCount: Int = 0,
     val folderCount: Int = 0,
