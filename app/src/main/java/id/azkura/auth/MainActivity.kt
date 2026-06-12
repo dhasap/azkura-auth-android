@@ -46,6 +46,7 @@ class MainActivity : FragmentActivity() {
                     val navController = rememberNavController()
                     AzkuraNavGraph(
                         navController = navController,
+                        vaultManager = vaultManager,
                         pendingOtpauthUri = pendingOtpauthUri.value,
                         onPendingOtpauthUriConsumed = { pendingOtpauthUri.value = null },
                     )

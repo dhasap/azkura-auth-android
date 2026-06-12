@@ -101,6 +101,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun refreshState() {
+        // Don't generate TOTP codes when vault is locked
+        if (vaultManager.isLocked.value) return
+
         val now = System.currentTimeMillis()
         val state = _uiState.value
         val query = state.searchQuery

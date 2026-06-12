@@ -2,11 +2,14 @@ package id.azkura.auth.ui.navigation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import id.azkura.auth.data.local.crypto.VaultManager
 import id.azkura.auth.ui.screens.addaccount.AddAccountScreen
 import id.azkura.auth.ui.screens.editaccount.EditAccountScreen
 import id.azkura.auth.ui.screens.home.HomeScreen
@@ -18,10 +21,24 @@ import id.azkura.auth.ui.screens.statistics.StatisticsScreen
 @Composable
 fun AzkuraNavGraph(
     navController: NavHostController,
+    vaultManager: VaultManager,
     startDestination: String = Screen.Lock.route,
     pendingOtpauthUri: String? = null,
     onPendingOtpauthUriConsumed: () -> Unit = {},
 ) {
+    // Observe vault lock state — navigate back to Lock screen on warm resume
+    val isLocked by vaultManager.isLocked.collectAsState()
+    LaunchedEffect(isLocked) {
+        if (isLocked) {
+            val currentRoute = navController.currentBackStackEntry?.destination?.route
+            if (currentRoute != null && currentRoute != Screen.Lock.route) {
+                navController.navigate(Screen.Lock.route) {
+                    popUpTo(0) { inclusive = true }
+                }
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -37,8 +54,9 @@ fun AzkuraNavGraph(
         }
 
         composable(Screen.Home.route) {
+            // Only consume deeplink after vault is unlocked (we're on Home = unlocked)
             LaunchedEffect(pendingOtpauthUri) {
-                if (!pendingOtpauthUri.isNullOrBlank()) {
+                if (!pendingOtpauthUri.isNullOrBlank() && !vaultManager.isLocked.value) {
                     navController.navigate(Screen.AddAccount.route)
                     navController.currentBackStackEntry
                         ?.savedStateHandle

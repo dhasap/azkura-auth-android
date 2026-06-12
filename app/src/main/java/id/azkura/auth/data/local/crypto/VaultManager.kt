@@ -80,9 +80,17 @@ class VaultManager @Inject constructor(
     /**
      * Export vault as encrypted string (for backup/transfer).
      * The payload includes accounts and folders so folder assignment survives restore.
+     *
+     * Security: Always requires a real password. If no PIN is set and no explicit
+     * password is provided, throws to prevent export with the weak default key.
      */
     suspend fun exportVault(password: String? = null): String {
-        val pwd = password ?: currentPassword ?: cryptoManager.getDefaultKey()
+        val pwd = password ?: currentPassword
+            ?: throw IllegalStateException("Cannot export vault without a password. Please set a PIN or provide an export password.")
+        // Reject the default key — exports must use a real user-supplied password
+        if (pwd == cryptoManager.getDefaultKey()) {
+            throw IllegalStateException("Cannot export vault with the default key. Please set a PIN or provide an export password.")
+        }
         val accounts = accountRepository.getAllAccounts()
         val folders = accountRepository.getAllFolders()
         val payload = EncryptedVaultData(

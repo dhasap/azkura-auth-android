@@ -54,6 +54,7 @@ data class SettingsUiState(
     val encryptBackup: Boolean = false,
     val showExportDialog: Boolean = false,
     val showBackupPasswordDialog: Boolean = false,
+    val showRemovePinDialog: Boolean = false,
 )
 
 @HiltViewModel
@@ -100,13 +101,39 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun onRemovePin() {
+    /**
+     * Remove PIN only after verifying the current PIN.
+     * This prevents privilege escalation via accessibility services or automated UI.
+     */
+    fun onRemovePin(currentPin: String) {
         viewModelScope.launch {
-            preferencesManager.clearPin()
-            _uiState.value = _uiState.value.copy(pinEnabled = false)
+            val storedHash = preferencesManager.pinHash.first()
+            val storedSalt = preferencesManager.pinSalt.first()
+            if (storedHash == null || storedSalt == null) {
+                // PIN data is already missing — just clear the flag
+                preferencesManager.clearPin()
+                _uiState.value = _uiState.value.copy(pinEnabled = false)
+                return@launch
+            }
+            val valid = cryptoManager.verifyPin(currentPin, storedHash, storedSalt)
+            if (valid) {
+                preferencesManager.clearPin()
+                preferencesManager.setBiometricEnabled(false)
+                _uiState.value = _uiState.value.copy(pinEnabled = false, biometricEnabled = false)
+            } else {
+                _uiState.value = _uiState.value.copy(pinSetupError = "Incorrect PIN")
+            }
         }
     }
 
+
+    fun onShowRemovePinDialog() {
+        _uiState.value = _uiState.value.copy(showRemovePinDialog = true, pinSetupError = null)
+    }
+
+    fun onDismissRemovePinDialog() {
+        _uiState.value = _uiState.value.copy(showRemovePinDialog = false, pinSetupError = null)
+    }
 
     fun onToggleEncryptBackup(enabled: Boolean) {
         if (!enabled) {
