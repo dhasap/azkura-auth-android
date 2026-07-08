@@ -242,27 +242,86 @@ fun ScannerScreen(
         }
     }
 
-    fun launchGalleryPicker() {
+    // Last-resort launcher using ACTION_PICK intent (Xiaomi/MIUI compatibility)
+    val galleryPickLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        isGalleryActive = false
+        val uri = result.data?.data
+        if (uri == null) {
+            errorMessage = "Tidak ada gambar dipilih"
+            return@rememberLauncherForActivityResult
+        }
+        val scanner = barcodeScanner
+        if (scanner == null) {
+            errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
+            return@rememberLauncherForActivityResult
+        }
+        isProcessingGalleryImage = true
+        errorMessage = null
         try {
-            isGalleryActive = true
+            val image = InputImage.fromFilePath(context, uri)
+            scanner.process(image)
+                .addOnSuccessListener { barcodes ->
+                    isProcessingGalleryImage = false
+                    val value = barcodes.firstNotNullOfOrNull { it.rawValue }
+                    if (value == null) {
+                        errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
+                    } else {
+                        handleScannedValue(value)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    isProcessingGalleryImage = false
+                    Log.w(TAG, "ACTION_PICK QR decode failed", e)
+                    errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
+                }
+        } catch (e: Exception) {
+            isProcessingGalleryImage = false
+            Log.w(TAG, "ACTION_PICK unable to open selected image", e)
+            errorMessage = "Tidak dapat membuka gambar yang dipilih"
+        }
+    }
+
+    fun launchGalleryPicker() {
+        // Strategy 1: Android Photo Picker (API 30+)
+        // Strategy 2: GetContent (universal fallback)
+        // Strategy 3: ACTION_PICK (Xiaomi/MIUI compatibility)
+        // Strategy 4: ACTION_GET_CONTENT as last resort
+        val used = try {
             if (ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)) {
+                isGalleryActive = true
                 galleryLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                 )
+                true
             } else {
-                Log.i(TAG, "Photo picker not available, falling back to GetContent")
-                fallbackGalleryLauncher.launch("image/*")
+                false
             }
         } catch (e: Exception) {
+            Log.w(TAG, "Photo picker failed", e)
             isGalleryActive = false
-            // No app on the device can handle the picker intent, or the
-            // launcher failed to start — try the other launcher as fallback.
-            Log.w(TAG, "Primary gallery picker failed, trying fallback", e)
+            false
+        }
+
+        if (!used) {
+            // Try GetContent fallback
             try {
+                isGalleryActive = true
                 fallbackGalleryLauncher.launch("image/*")
-            } catch (e2: Exception) {
-                Log.w(TAG, "Fallback gallery picker also failed", e2)
-                errorMessage = "Tidak dapat membuka galeri di perangkat ini"
+            } catch (e: Exception) {
+                Log.w(TAG, "GetContent fallback failed", e)
+                isGalleryActive = false
+                // Last resort: ACTION_PICK intent (works on most MIUI devices)
+                try {
+                    val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
+                        type = "image/*"
+                    }
+                    galleryPickLauncher.launch(pickIntent)
+                } catch (e2: Exception) {
+                    Log.w(TAG, "ACTION_PICK also failed", e2)
+                    errorMessage = "Tidak dapat membuka galeri di perangkat ini"
+                }
             }
         }
     }
