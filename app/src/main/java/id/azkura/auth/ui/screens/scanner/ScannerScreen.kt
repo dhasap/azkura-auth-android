@@ -130,6 +130,7 @@ fun ScannerScreen(
     var hasScanned by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isProcessingGalleryImage by remember { mutableStateOf(false) }
+    var isGalleryActive by remember { mutableStateOf(false) }
 
     // The ML Kit barcode client is used by both the live camera analyzer and
     // the gallery-import path. Creating it can theoretically fail if Google
@@ -166,6 +167,7 @@ fun ScannerScreen(
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? ->
+        isGalleryActive = false
         if (uri == null) return@rememberLauncherForActivityResult
         val scanner = barcodeScanner
         if (scanner == null) {
@@ -207,6 +209,7 @@ fun ScannerScreen(
     val fallbackGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
+        isGalleryActive = false
         if (uri == null) return@rememberLauncherForActivityResult
         val scanner = barcodeScanner
         if (scanner == null) {
@@ -241,6 +244,7 @@ fun ScannerScreen(
 
     fun launchGalleryPicker() {
         try {
+            isGalleryActive = true
             if (ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)) {
                 galleryLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -250,6 +254,7 @@ fun ScannerScreen(
                 fallbackGalleryLauncher.launch("image/*")
             }
         } catch (e: Exception) {
+            isGalleryActive = false
             // No app on the device can handle the picker intent, or the
             // launcher failed to start — try the other launcher as fallback.
             Log.w(TAG, "Primary gallery picker failed, trying fallback", e)
@@ -372,10 +377,12 @@ fun ScannerScreen(
     }
 
     // Auto-dismiss transient errors after being shown so they don't linger
-    // and block the screen forever.
+    // and block the screen forever. Gallery import errors stay longer (8s)
+    // since they appear briefly after the picker closes.
     LaunchedEffect(errorMessage) {
         if (errorMessage != null) {
-            kotlinx.coroutines.delay(4000)
+            val delayMs = if (isProcessingGalleryImage || errorMessage?.contains("gambar") == true) 8000L else 4000L
+            kotlinx.coroutines.delay(delayMs)
             errorMessage = null
         }
     }
@@ -490,7 +497,7 @@ private fun BoxScope.CameraScannerContent(
                         setAnalyzer(executor) { imageProxy ->
                             try {
                                 val mediaImage = imageProxy.image
-                                if (mediaImage != null && !hasScanned) {
+                                if (mediaImage != null && !hasScanned && !isGalleryActive) {
                                     val image = InputImage.fromMediaImage(
                                         mediaImage,
                                         imageProxy.imageInfo.rotationDegrees,
