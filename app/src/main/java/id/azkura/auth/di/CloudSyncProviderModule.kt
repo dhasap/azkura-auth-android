@@ -4,7 +4,7 @@ import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import dagger.multibindings.ElementsIntoSet
+import dagger.multibindings.IntoSet
 import id.azkura.auth.data.remote.CloudSyncProvider
 import id.azkura.auth.data.remote.GoogleDriveSyncProvider
 
@@ -13,12 +13,12 @@ import id.azkura.auth.data.remote.GoogleDriveSyncProvider
  *
  * To add a new provider:
  *  1. Create a class implementing [CloudSyncProvider].
- *  2. Add a new @Binds @ElementsIntoSet method here.
+ *  2. Add a new @Binds @IntoSet method here.
  *  3. That's it — the registry, ViewModel, and UI pick it up automatically.
  *
  * Example for a future OneDrive provider:
  * ```kotlin
- * @Binds @ElementsIntoSet
+ * @Binds @IntoSet
  * fun bindOneDrive(impl: OneDriveSyncProvider): CloudSyncProvider
  * ```
  */
@@ -27,15 +27,15 @@ import id.azkura.auth.data.remote.GoogleDriveSyncProvider
 abstract class CloudSyncProviderModule {
 
     @Binds
-    @ElementsIntoSet
+    @IntoSet
     abstract fun bindGoogleDrive(
         impl: GoogleDriveSyncProvider,
     ): CloudSyncProvider
 
     // ── Future providers go here ─────────────────────────────────────────────
-    // @Binds @ElementsIntoSet
+    // @Binds @IntoSet
     // abstract fun bindOneDrive(impl: OneDriveSyncProvider): CloudSyncProvider
     //
-    // @Binds @ElementsIntoSet
+    // @Binds @IntoSet
     // abstract fun bindDropbox(impl: DropboxSyncProvider): CloudSyncProvider
 }
