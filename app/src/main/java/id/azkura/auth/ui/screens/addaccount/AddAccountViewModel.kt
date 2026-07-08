@@ -53,8 +53,8 @@ class AddAccountViewModel @Inject constructor(
     // Auto-backup debounce + rate limiting
     private var autoBackupJob: Job? = null
     private var lastAutoBackupTime: Long = 0L
-    private val AUTO_BACKUP_DEBOUNCE_MS=***L * 1000L // 10 seconds debounce
-    private val AUTO_BACKUP_MIN_INTERVAL_MS =***L * 60L * 1000L // 5 min between auto-backups
+    private val AUTO_BACKUP_DEBOUNCE_MS = 10L * 1000L // 10 seconds debounce
+    private val AUTO_BACKUP_MIN_INTERVAL_MS = 5L * 60L * 1000L // 5 min between auto-backups
 
     init {
         viewModelScope.launch {
