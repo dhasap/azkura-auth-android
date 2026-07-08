@@ -1,20 +1,28 @@
 package id.azkura.auth.ui.screens.addaccount
 
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import id.azkura.auth.data.local.prefs.PreferencesManager
 import id.azkura.auth.data.model.Account
+import id.azkura.auth.data.remote.CloudSyncProviderRegistry
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.data.repository.StatsRepository
 import id.azkura.auth.util.TotpGenerator
 import id.azkura.auth.util.UriParser
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
+
+private const val TAG = "AddAccountVM"
 
 data class AddAccountUiState(
     val issuer: String = "",
@@ -35,16 +43,30 @@ class AddAccountViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val statsRepository: StatsRepository,
     private val savedStateHandle: SavedStateHandle,
+    private val providerRegistry: CloudSyncProviderRegistry,
+    private val preferencesManager: PreferencesManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddAccountUiState())
     val uiState: StateFlow<AddAccountUiState> = _uiState.asStateFlow()
+
+    // Auto-backup debounce + rate limiting
+    private var autoBackupJob: Job? = null
+    private var lastAutoBackupTime: Long = 0L
+    private val AUTO_BACKUP_DEBOUNCE_MS=***L * 1000L // 10 seconds debounce
+    private val AUTO_BACKUP_MIN_INTERVAL_MS =***L * 60L * 1000L // 5 min between auto-backups
 
     init {
         viewModelScope.launch {
             accountRepository.observeAllFolders().collect { folders ->
                 _uiState.value = _uiState.value.copy(folders = folders)
             }
+        }
+
+        // Restore last auto-backup timestamp for rate limiting across restarts
+        viewModelScope.launch {
+            val saved = preferencesManager.lastAutoBackupAt.first()?.toLongOrNull()
+            if (saved != null) lastAutoBackupTime = saved
         }
 
         // Observe scanned URI results from ScannerScreen. The value is written
@@ -153,9 +175,87 @@ class AddAccountViewModel @Inject constructor(
                 }
 
                 _uiState.value = state.copy(isSaved = true)
+
+                // Schedule auto-backup to Google Drive (safety net).
+                // Debounced: if user adds multiple accounts quickly, only
+                // one backup fires after the last add.
+                scheduleAutoBackup()
+
             } catch (e: Exception) {
                 _uiState.value = state.copy(error = "Failed to save: ${e.message}")
             }
+        }
+    }
+
+    /**
+     * Schedule a debounced auto-backup to Google Drive.
+     *
+     * - Debounce: waits 10s after the LAST addAccount call before backing up.
+     * - Rate limit: won't backup more than once every 5 minutes.
+     * - Silent: no UI feedback, logs only. This is a safety net, not primary UX.
+     */
+    private fun scheduleAutoBackup() {
+        // Cancel any pending auto-backup (debounce)
+        autoBackupJob?.cancel()
+
+        autoBackupJob = viewModelScope.launch {
+            delay(AUTO_BACKUP_DEBOUNCE_MS)
+
+            // Rate limit check
+            val now = System.currentTimeMillis()
+            if (now - lastAutoBackupTime < AUTO_BACKUP_MIN_INTERVAL_MS) {
+                Log.d(TAG, "Auto-backup skipped: rate limited (${(now - lastAutoBackupTime) / 1000}s since last)")
+                return@launch
+            }
+
+            performAutoBackup()
+        }
+    }
+
+    private suspend fun performAutoBackup() {
+        try {
+            val provider = providerRegistry.getById("google-drive") ?: run {
+                Log.d(TAG, "Auto-backup skipped: no Google Drive provider")
+                return
+            }
+
+            if (!provider.isSignedIn()) {
+                Log.d(TAG, "Auto-backup skipped: Google not connected")
+                return
+            }
+
+            val token = provider.getAccessToken()
+            if (token == null) {
+                Log.d(TAG, "Auto-backup skipped: no valid token")
+                return
+            }
+
+            // Check if backup encryption is enabled (respect user's setting)
+            val encryptBackup = preferencesManager.encryptBackup.first()
+            val backupPassword = preferencesManager.backupPassword.first()
+            if (encryptBackup && backupPassword == null) {
+                Log.d(TAG, "Auto-backup skipped: encryption enabled but no backup password set")
+                return
+            }
+
+            // Prepare backup payload
+            val accounts = accountRepository.getAllAccounts()
+            val folders = accountRepository.getAllFolders()
+            val payload = id.azkura.auth.data.remote.BackupPayload(
+                accountsJson = kotlinx.serialization.json.Json.encodeToString(accounts),
+                foldersJson = kotlinx.serialization.json.Json.encodeToString(folders),
+                accountCount = accounts.size,
+                folderCount = folders.size,
+                versionName = id.azkura.auth.BuildConfig.VERSION_NAME,
+            )
+
+            val result = provider.backup(payload)
+            lastAutoBackupTime = System.currentTimeMillis()
+            preferencesManager.setLastAutoBackupAt(lastAutoBackupTime.toString())
+            Log.i(TAG, "Auto-backup completed: ${result.fileName} (${result.accountCount} accounts)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Auto-backup failed: ${e.message}")
+            // Non-fatal — user can still backup manually
         }
     }
 }

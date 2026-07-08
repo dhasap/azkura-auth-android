@@ -39,6 +39,7 @@ class PreferencesManager @Inject constructor(
         val GOOGLE_USER_PICTURE = stringPreferencesKey("google_user_picture")
         val ENCRYPT_BACKUP = booleanPreferencesKey("encrypt_backup")
         val FIRST_LAUNCH = booleanPreferencesKey("first_launch")
+        val LAST_AUTO_BACKUP_AT = stringPreferencesKey("last_auto_backup_at")
     }
 
     // ── Reads (Flow-based) ───────────────────────────────────────────────────
@@ -56,6 +57,8 @@ class PreferencesManager @Inject constructor(
     val googleUserEmail: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_EMAIL] }
     val googleUserPicture: Flow<String?> = dataStore.data.map { it[Keys.GOOGLE_USER_PICTURE] }
     val isFirstLaunch: Flow<Boolean> = dataStore.data.map { it[Keys.FIRST_LAUNCH] ?: true }
+
+    val lastAutoBackupAt: Flow<String?> = dataStore.data.map { it[Keys.LAST_AUTO_BACKUP_AT] }
 
     // Default to true — backups should be encrypted by default (Issue #2)
     val encryptBackup: Flow<Boolean> = dataStore.data.map { it[Keys.ENCRYPT_BACKUP] ?: true }
@@ -165,5 +168,9 @@ class PreferencesManager @Inject constructor(
 
     suspend fun setFirstLaunchDone() {
         dataStore.edit { it[Keys.FIRST_LAUNCH] = false }
+    }
+
+    suspend fun setLastAutoBackupAt(timestamp: String) {
+        dataStore.edit { it[Keys.LAST_AUTO_BACKUP_AT] = timestamp }
     }
 }
