@@ -21,6 +21,7 @@ import id.azkura.auth.data.remote.CloudSyncProviderRegistry
 import id.azkura.auth.data.remote.ConnectResult
 import id.azkura.auth.data.remote.CloudSyncProvider
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.util.BiometricHelper
 import id.azkura.auth.util.LocalBackupManager
@@ -644,8 +645,8 @@ class SettingsViewModel @Inject constructor(
         val accounts = accountRepository.getAllAccounts()
         val folders = accountRepository.getAllFolders()
         val payload = id.azkura.auth.data.remote.BackupPayload(
-            accountsJson = kotlinx.serialization.encodeToString(accounts),
-            foldersJson = kotlinx.serialization.encodeToString(folders),
+            accountsJson = Json.encodeToString(accounts),
+            foldersJson = Json.encodeToString(folders),
             accountCount = accounts.size,
             folderCount = folders.size,
             versionName = id.azkura.auth.BuildConfig.VERSION_NAME,
