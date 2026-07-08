@@ -8,8 +8,16 @@ Security fixes are prioritized for the latest published release.
 
 | Version | Supported |
 | --- | --- |
-| 2.9.x | Yes |
+| 2.10.x | Yes |
+| 2.9.x | Best effort |
 | Older releases | Best effort |
+
+## Hardening in the App
+
+- Release builds are minified/obfuscated with R8 (`proguard-rules.pro`).
+- Cleartext (HTTP) traffic is forbidden app-wide via `network_security_config.xml`.
+- Google API TLS connections are certificate-pinned at the CA level.
+- TOTP secrets, backups, and the usage-statistics file are encrypted at rest.
 
 ## Reporting a Vulnerability
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network security policy for Azkura Auth.
+
+    - Disallows cleartext (HTTP) traffic app-wide, including on Android 8.0-8.1
+      (API 26-27) where this is not the platform default. Fixes GitHub issue #16.
+    - Pins Google's API TLS chain for googleapis.com (Drive backup + OAuth
+      userinfo calls) to the GTS Root R1 / legacy GlobalSign cross-sign roots
+      plus the current WR2 intermediate. Pinning at the CA level (not the leaf)
+      keeps the app working across routine leaf-certificate rotation, and the
+      pin-set expiration date below makes pinning fail open (fall back to the
+      system trust store) instead of permanently breaking connectivity if this
+      app build is never updated. Fixes GitHub issue #13.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <domain-config>
+        <domain includeSubdomains="true">googleapis.com</domain>
+        <pin-set expiration="2027-07-08">
+            <!-- Google Trust Services "WR2" intermediate (current issuer for *.googleapis.com) -->
+            <pin digest="SHA-256">YPtHaftLw6/0vnc2BnNKGF54xiCA28WFcccjkA4ypCM=</pin>
+            <!-- GTS Root R1 -->
+            <pin digest="SHA-256">hxqRlPTu1bMS/0DITB1SSu0vd4u/8l8TjPgfaAp63Gc=</pin>
+            <!-- GlobalSign Root CA (legacy cross-sign for GTS Root R1, long-lived backup pin) -->
+            <pin digest="SHA-256">K87oWBWM9UZfyddvDfoxL+8lpNyoUB2ptGtn0fv6G2Q=</pin>
+        </pin-set>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!-- Allow a network debugging proxy (e.g. Charles/mitmproxy with a user CA)
+         ONLY in debug builds. Never applied to the release build. -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

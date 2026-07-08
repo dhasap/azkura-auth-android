@@ -13,7 +13,10 @@ Azkura Auth Android is a native, privacy-focused TOTP authenticator built with K
 
 - **RFC 6238 TOTP generation** with SHA-1, SHA-256, and SHA-512 support.
 - **QR code scanning** with CameraX and ML Kit for quick account enrollment.
+- **Import QR from gallery** using the permission-less Android Photo Picker, so accounts can be added even without a camera.
 - **`otpauth://` deep-link import** with strict issuer handling to avoid false-positive service detection.
+- **Crash-safe enrollment** — unsupported devices, unreadable images, non-`otpauth` QR codes, and invalid Base32 secrets fail gracefully instead of crashing.
+- **Hardened release builds** with R8 obfuscation, cleartext-traffic blocking, and Google API TLS certificate pinning.
 - **Encrypted local vault** using Android security primitives and app-managed vault protection.
 - **PIN and biometric unlock** for everyday app access.
 - **Google Drive backup and restore** with encrypted backup support.

@@ -7,6 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import id.azkura.auth.data.model.Account
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.data.repository.StatsRepository
+import id.azkura.auth.util.TotpGenerator
 import id.azkura.auth.util.UriParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -95,6 +96,18 @@ class AddAccountViewModel @Inject constructor(
     fun parseUri(uri: String) {
         try {
             val parsed = UriParser.parse(uri)
+            // Defense in depth: a QR/deeplink payload can claim to be an
+            // otpauth:// URI with a `secret` parameter that isn't valid
+            // Base32 (malformed, truncated, or a non-TOTP QR that happens to
+            // match the scheme). Reject it here so it never reaches TOTP
+            // generation, where an unusable key would otherwise crash the
+            // once-a-second code refresh loop on the Home screen.
+            if (!TotpGenerator.isValidSecret(parsed.secret)) {
+                _uiState.value = _uiState.value.copy(
+                    error = "Invalid QR code: secret key is not valid Base32",
+                )
+                return
+            }
             _uiState.value = _uiState.value.copy(
                 issuer = parsed.issuer,
                 account = parsed.account,
@@ -113,6 +126,10 @@ class AddAccountViewModel @Inject constructor(
         val state = _uiState.value
         if (state.secret.isBlank()) {
             _uiState.value = state.copy(error = "Secret key is required")
+            return
+        }
+        if (!TotpGenerator.isValidSecret(state.secret)) {
+            _uiState.value = state.copy(error = "Secret key must be valid Base32 (A-Z, 2-7)")
             return
         }
 

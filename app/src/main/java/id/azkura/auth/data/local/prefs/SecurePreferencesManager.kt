@@ -3,7 +3,7 @@ package id.azkura.auth.data.local.prefs
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -13,17 +13,26 @@ import javax.inject.Singleton
  * Uses AndroidX EncryptedSharedPreferences backed by Android Keystore.
  *
  * Non-sensitive preferences (sort order, UI flags) remain in the regular DataStore.
+ *
+ * NOTE: androidx.security:security-crypto 1.1.0 marks EncryptedSharedPreferences/
+ * MasterKey as deprecated in favor of a DataStore + Tink-based approach. The
+ * API is still fully supported and secure (AES-256-GCM/SIV via Android
+ * Keystore) — this is a forward-looking deprecation, not a vulnerability.
+ * Migrating to the new storage APIs is worth tracking as separate follow-up
+ * work since it touches persisted OAuth token/backup-password data formats.
  */
 @Singleton
 class SecurePreferencesManager @Inject constructor(
     @ApplicationContext context: Context,
 ) {
     private val prefs: SharedPreferences = try {
-        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
         EncryptedSharedPreferences.create(
-            "azkura_secure_prefs",
-            masterKeyAlias,
             context,
+            "azkura_secure_prefs",
+            masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )

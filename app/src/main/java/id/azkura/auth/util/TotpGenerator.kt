@@ -100,6 +100,25 @@ object TotpGenerator {
         if (secret.isEmpty()) return false
         return secret.all { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" }
     }
+
+    /**
+     * Public, defensive validity check for a Base32 TOTP secret: it must use
+     * only the RFC 4648 Base32 alphabet AND decode to at least one byte (an
+     * all-padding or empty string passes the character check but yields an
+     * empty HMAC key, which crashes [Mac.init]). Used before persisting
+     * accounts and before generating codes, so a malformed secret (typed by
+     * hand, from a corrupted backup, or an unsupported QR payload) is
+     * rejected with a clear error instead of crashing the app later.
+     */
+    fun isValidSecret(secret: String): Boolean {
+        val cleaned = secret.replace("\\s".toRegex(), "").uppercase()
+        if (!isValidBase32(cleaned)) return false
+        return try {
+            Base32.decode(cleaned).isNotEmpty()
+        } catch (_: Exception) {
+            false
+        }
+    }
 }
 
 /** Minimal Base32 (RFC 4648) decoder. */

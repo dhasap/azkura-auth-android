@@ -64,6 +64,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -275,6 +277,56 @@ fun SettingsScreen(
         )
     }
 
+    if (state.showRemovePinDialog) {
+        var currentPin by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = viewModel::onDismissRemovePinDialog,
+            title = { Text("Remove PIN") },
+            text = {
+                Column {
+                    Text(
+                        "Enter your current PIN to disable PIN protection.",
+                        color = TextSecondary,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = currentPin,
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) currentPin = it },
+                        label = { Text("Current PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Accent,
+                            unfocusedBorderColor = BorderMedium,
+                            cursorColor = Accent,
+                            focusedTextColor = TextPrimary,
+                        ),
+                    )
+                    state.pinSetupError?.let { pinError ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            pinError,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { viewModel.onRemovePin(currentPin) },
+                    enabled = currentPin.length == 6,
+                ) {
+                    Text("Remove PIN", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::onDismissRemovePinDialog) { Text("Cancel") }
+            },
+        )
+    }
+
     state.exportResult?.let { exportText ->
         AlertDialog(
             onDismissRequest = viewModel::clearExportResult,
@@ -387,7 +439,7 @@ fun SettingsScreen(
                         checked = state.pinEnabled,
                         onCheckedChange = { enabled ->
                             if (enabled) viewModel.onShowSetPinDialog()
-                            else viewModel.onRemovePin()
+                            else viewModel.onShowRemovePinDialog()
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Accent,

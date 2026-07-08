@@ -91,10 +91,18 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        // Tick every second to update TOTP codes + countdown
+        // Tick every second to update TOTP codes + countdown.
+        // refreshState() is defensively wrapped so an unexpected error never
+        // silently kills this loop (which would freeze every TOTP code on
+        // screen until the app is restarted).
         viewModelScope.launch {
             while (isActive) {
-                refreshState()
+                try {
+                    refreshState()
+                } catch (_: Exception) {
+                    // Keep ticking — next iteration may recover, and a single
+                    // frozen refresh is far less harmful than a dead loop.
+                }
                 delay(1000)
             }
         }
@@ -123,15 +131,25 @@ class HomeViewModel @Inject constructor(
 
         val filtered = visibleAccounts.map { acc ->
                 val algo = TotpGenerator.Algorithm.from(acc.algorithm)
-                AccountWithCode(
-                    account = acc,
-                    code = TotpGenerator.generate(
+                // A single malformed/corrupted secret (e.g. from a bad manual
+                // edit, an unsupported QR payload, or a legacy import) must
+                // never take down this once-a-second refresh loop for every
+                // other account. Fall back to a visible error placeholder for
+                // just that account instead of crashing.
+                val code = try {
+                    TotpGenerator.generate(
                         secretBase32 = acc.secret,
                         digits = acc.digits,
                         period = acc.period,
                         algorithm = algo,
                         timeMillis = now,
-                    ),
+                    )
+                } catch (_: Exception) {
+                    "•".repeat(acc.digits.coerceIn(6, 10))
+                }
+                AccountWithCode(
+                    account = acc,
+                    code = code,
                     remainingSeconds = TotpGenerator.getRemainingSeconds(acc.period, now),
                     period = acc.period,
                 )

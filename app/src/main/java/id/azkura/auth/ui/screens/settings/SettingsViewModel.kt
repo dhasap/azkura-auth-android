@@ -112,14 +112,19 @@ class SettingsViewModel @Inject constructor(
             if (storedHash == null || storedSalt == null) {
                 // PIN data is already missing — just clear the flag
                 preferencesManager.clearPin()
-                _uiState.value = _uiState.value.copy(pinEnabled = false)
+                _uiState.value = _uiState.value.copy(pinEnabled = false, showRemovePinDialog = false)
                 return@launch
             }
             val valid = cryptoManager.verifyPin(currentPin, storedHash, storedSalt)
             if (valid) {
                 preferencesManager.clearPin()
                 preferencesManager.setBiometricEnabled(false)
-                _uiState.value = _uiState.value.copy(pinEnabled = false, biometricEnabled = false)
+                _uiState.value = _uiState.value.copy(
+                    pinEnabled = false,
+                    biometricEnabled = false,
+                    showRemovePinDialog = false,
+                    pinSetupError = null,
+                )
             } else {
                 _uiState.value = _uiState.value.copy(pinSetupError = "Incorrect PIN")
             }

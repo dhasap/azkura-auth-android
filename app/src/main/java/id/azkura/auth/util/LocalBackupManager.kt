@@ -38,24 +38,12 @@ class LocalBackupManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val accountRepository: AccountRepository,
 ) {
-    /** Export vault backup JSON to a user-chosen URI via SAF (Storage Access Framework). */
-    suspend fun exportToUri(uri: Uri): LocalBackupExportResult = withContext(Dispatchers.IO) {
-        val accounts = accountRepository.getAllAccounts()
-        val folders = accountRepository.getAllFolders()
-        val now = Instant.now()
-        val fileName = getFileNameFromUri(uri).ifBlank {
-            "azkura-backup-${FILE_TIMESTAMP_FORMAT.format(now)}.json"
-        }
-        val content = buildBackupJson(accounts, folders, now)
-
-        writeTextToUri(uri, content)
-
-        LocalBackupExportResult(
-            fileName = fileName,
-            accountCount = accounts.size,
-            folderCount = folders.size,
-        )
-    }
+    // NOTE: A previous unencrypted `exportToUri()` helper (writing plaintext
+    // backup JSON with all TOTP secrets) was removed here — see GitHub issue
+    // #14. The UI only ever exports through `exportVaultToUri()` below, which
+    // requires an already-encrypted `.vault` payload from VaultManager. This
+    // guarantees every local file export is protected, matching the Google
+    // Drive backup path and eliminating the plaintext-export foot-gun.
 
     /** Export encrypted .vault content to a user-chosen URI. */
     suspend fun exportVaultToUri(uri: Uri, encryptedVault: String): LocalBackupExportResult = withContext(Dispatchers.IO) {
@@ -73,19 +61,6 @@ class LocalBackupManager @Inject constructor(
             accountCount = accounts.size,
             folderCount = folders.size,
         )
-    }
-
-    private fun buildBackupJson(accounts: List<Account>, folders: List<Folder>, exportedAt: Instant): String {
-        val backup = LocalBackupData(
-            app = APP_NAME,
-            version = APP_VERSION,
-            exportedAt = exportedAt.toString(),
-            accountCount = accounts.size,
-            folderCount = folders.size,
-            accounts = accounts,
-            folders = folders,
-        )
-        return BACKUP_JSON.encodeToString(backup)
     }
 
     private fun writeTextToUri(uri: Uri, content: String) {
@@ -298,7 +273,6 @@ class LocalBackupManager @Inject constructor(
 
     companion object {
         private const val APP_NAME = "azkura-auth"
-        private val APP_VERSION: String get() = BuildConfig.VERSION_NAME
         private const val MAX_BACKUP_BYTES = 1024 * 1024
         private const val MAX_ACCOUNTS = 1000
         private const val MAX_FOLDERS = 100

@@ -2,6 +2,7 @@ package id.azkura.auth.data.repository
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import id.azkura.auth.data.local.crypto.SecretEncryptor
 import id.azkura.auth.data.model.AppStats
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,11 +18,18 @@ import javax.inject.Singleton
 /**
  * Statistics tracking repository.
  * Port of src/core/stats.js — tracks copy counts, daily activity, etc.
- * Persists to a JSON file (same approach as the extension's chrome.storage.local).
+ *
+ * Persisted as AES-256-GCM ciphertext (via [SecretEncryptor], the same
+ * Keystore-backed encryptor used for TOTP secrets) instead of plaintext JSON,
+ * since this file reveals usage patterns and account identifiers even without
+ * exposing TOTP seeds directly. See GitHub issue #15. Legacy plaintext files
+ * from older app versions are still readable and get re-encrypted on the next
+ * write (one-way migration, no data loss).
  */
 @Singleton
 class StatsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val secretEncryptor: SecretEncryptor,
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
     private val statsFile = File(context.filesDir, "app_stats.json")
@@ -86,12 +94,16 @@ class StatsRepository @Inject constructor(
 
     private fun loadStats(): AppStats {
         return try {
-            if (statsFile.exists()) {
-                json.decodeFromString(statsFile.readText())
-            } else {
-                AppStats()
-            }
+            if (!statsFile.exists()) return AppStats()
+            val raw = statsFile.readText()
+            // Encrypted (current format) or legacy plaintext (pre-encryption
+            // migration) — SecretEncryptor.decrypt() returns unencrypted
+            // input unchanged, so both formats parse safely here.
+            val plaintext = secretEncryptor.decrypt(raw)
+            json.decodeFromString(plaintext)
         } catch (_: Exception) {
+            // Corrupted or unreadable stats are non-critical — reset rather
+            // than crash the app on launch.
             AppStats()
         }
     }
@@ -99,7 +111,8 @@ class StatsRepository @Inject constructor(
     private fun saveAndEmit(stats: AppStats) {
         _stats.value = stats
         try {
-            statsFile.writeText(json.encodeToString(stats))
+            val encrypted = secretEncryptor.encrypt(json.encodeToString(stats))
+            statsFile.writeText(encrypted)
         } catch (_: Exception) {
             // Silently fail — not critical
         }
