@@ -20,6 +20,7 @@ import id.azkura.auth.data.remote.GoogleDriveService
 import id.azkura.auth.data.remote.CloudSyncProviderRegistry
 import id.azkura.auth.data.remote.ConnectResult
 import id.azkura.auth.data.remote.CloudSyncProvider
+import kotlinx.serialization.encodeToString
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.util.BiometricHelper
 import id.azkura.auth.util.LocalBackupManager
