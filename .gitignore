@@ -66,5 +66,8 @@ Thumbs.db
 *.swo
 .vscode/
 
+# Auth config backup (stored in-app, not committed)
+# app internal files are already excluded from git by being in data/
+
 # Keep Room schemas in git when migrations are added
 # app/schemas/

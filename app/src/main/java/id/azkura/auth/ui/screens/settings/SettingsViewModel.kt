@@ -17,6 +17,9 @@ import id.azkura.auth.data.remote.GoogleAuthService
 import id.azkura.auth.data.remote.GoogleAuthorizationOutcome
 import id.azkura.auth.data.remote.GoogleDriveAuthException
 import id.azkura.auth.data.remote.GoogleDriveService
+import id.azkura.auth.data.remote.CloudSyncProviderRegistry
+import id.azkura.auth.data.remote.ConnectResult
+import id.azkura.auth.data.remote.CloudSyncProvider
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.util.BiometricHelper
 import id.azkura.auth.util.LocalBackupManager
@@ -55,6 +58,11 @@ data class SettingsUiState(
     val showExportDialog: Boolean = false,
     val showBackupPasswordDialog: Boolean = false,
     val showRemovePinDialog: Boolean = false,
+    // ── Provider-agnostic state ────────────────────────────────────────────
+    val activeProviderId: String? = null,
+    val activeProviderBusy: Boolean = false,
+    val activeProviderMessage: String? = null,
+    val pendingProviderConsent: android.app.PendingIntent? = null,
 )
 
 @HiltViewModel
@@ -67,9 +75,13 @@ class SettingsViewModel @Inject constructor(
     private val googleAuthService: GoogleAuthService,
     private val googleDriveService: GoogleDriveService,
     private val localBackupManager: LocalBackupManager,
+    private val providerRegistry: CloudSyncProviderRegistry,
 ) : ViewModel() {
 
     private enum class PendingGoogleAction { SIGN_IN, BACKUP, RESTORE }
+    private enum class PendingProviderAction { CONNECT, BACKUP, RESTORE }
+    private var pendingProviderAction: PendingProviderAction? = null
+    private var pendingProviderId: String? = null
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -471,5 +483,200 @@ class SettingsViewModel @Inject constructor(
     private fun formatTimestamp(value: String?): String? {
         val millis = value?.toLongOrNull() ?: return value
         return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(millis))
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Provider-agnostic methods (new — prefer these for future UI components)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** All registered cloud sync providers. */
+    val availableProviders: List<CloudSyncProvider>
+        get() = providerRegistry.availableProviders
+
+    /** Connect to any registered cloud sync provider by ID. */
+    fun onConnectProvider(providerId: String, activity: Activity) {
+        val provider = providerRegistry.getById(providerId) ?: return
+        viewModelScope.launch {
+            startProviderOp(providerId)
+            try {
+                when (val result = provider.connect(activity)) {
+                    is ConnectResult.Connected -> {
+                        pendingProviderAction = null
+                        pendingProviderId = null
+                        setProviderResult(providerId, "Connected as ${result.accountInfo.email}")
+                    }
+                    is ConnectResult.NeedsConsent -> {
+                        pendingProviderAction = PendingProviderAction.CONNECT
+                        pendingProviderId = providerId
+                        _uiState.value = _uiState.value.copy(
+                            activeProviderBusy = false,
+                            activeProviderMessage = "Complete ${provider.displayName} sign-in",
+                            pendingProviderConsent = result.pendingIntent,
+                        )
+                    }
+                }
+            } catch (error: Exception) {
+                handleProviderError(providerId, error)
+            }
+        }
+    }
+
+    /** Disconnect from any registered cloud sync provider by ID. */
+    fun onDisconnectProvider(providerId: String) {
+        val provider = providerRegistry.getById(providerId) ?: return
+        viewModelScope.launch {
+            provider.disconnect()
+            setProviderResult(providerId, "${provider.displayName} disconnected")
+        }
+    }
+
+    /** Backup to any registered cloud sync provider. */
+    fun onBackupToProvider(providerId: String, activity: Activity) {
+        val provider = providerRegistry.getById(providerId) ?: return
+        viewModelScope.launch {
+            startProviderOp(providerId)
+            try {
+                val token = ensureProviderToken(provider, activity, PendingProviderAction.BACKUP)
+                    ?: return@launch
+                runProviderBackup(provider)
+            } catch (error: Exception) {
+                handleProviderError(providerId, error)
+            }
+        }
+    }
+
+    /** Restore from any registered cloud sync provider. */
+    fun onRestoreFromProvider(providerId: String, activity: Activity) {
+        val provider = providerRegistry.getById(providerId) ?: return
+        viewModelScope.launch {
+            startProviderOp(providerId)
+            try {
+                val token = ensureProviderToken(provider, activity, PendingProviderAction.RESTORE)
+                    ?: return@launch
+                runProviderRestore(provider)
+            } catch (error: Exception) {
+                handleProviderError(providerId, error)
+            }
+        }
+    }
+
+    /** Handle provider consent result from ActivityResultLauncher. */
+    fun onProviderConsentResult(intent: Intent?) {
+        val providerId = pendingProviderId ?: return
+        val provider = providerRegistry.getById(providerId) ?: return
+        val action = pendingProviderAction ?: PendingProviderAction.CONNECT
+        pendingProviderAction = null
+        pendingProviderId = null
+        viewModelScope.launch {
+            startProviderOp(providerId)
+            try {
+                when (action) {
+                    PendingProviderAction.CONNECT -> {
+                        when (val res = provider.connect(context as? Activity ?: return@launch)) {
+                            is ConnectResult.Connected -> setProviderResult(providerId, "Connected to ${provider.displayName}")
+                            is ConnectResult.NeedsConsent -> {
+                                pendingProviderAction = PendingProviderAction.CONNECT
+                                pendingProviderId = providerId
+                                _uiState.value = _uiState.value.copy(
+                                    activeProviderBusy = false,
+                                    pendingProviderConsent = res.pendingIntent,
+                                )
+                            }
+                        }
+                    }
+                    PendingProviderAction.BACKUP -> runProviderBackup(provider)
+                    PendingProviderAction.RESTORE -> runProviderRestore(provider)
+                }
+            } catch (error: Exception) {
+                handleProviderError(providerId, error)
+            }
+        }
+    }
+
+    fun onProviderConsentCancelled() {
+        pendingProviderAction = null
+        pendingProviderId = null
+        _uiState.value = _uiState.value.copy(
+            activeProviderBusy = false,
+            activeProviderMessage = "Sign-in cancelled",
+            pendingProviderConsent = null,
+        )
+    }
+
+    fun clearProviderMessage() {
+        _uiState.value = _uiState.value.copy(activeProviderMessage = null)
+    }
+
+    // ── Provider private helpers ────────────────────────────────────────────
+
+    private fun startProviderOp(providerId: String) {
+        _uiState.value = _uiState.value.copy(
+            activeProviderId = providerId,
+            activeProviderBusy = true,
+            activeProviderMessage = null,
+            pendingProviderConsent = null,
+        )
+    }
+
+    private suspend fun ensureProviderToken(
+        provider: CloudSyncProvider,
+        activity: Activity,
+        action: PendingProviderAction,
+    ): String? {
+        provider.getAccessToken()?.let { return it }
+        when (val outcome = provider.connect(activity)) {
+            is ConnectResult.Connected -> return outcome.accountInfo.extras["access_token"]
+            is ConnectResult.NeedsConsent -> {
+                pendingProviderAction = action
+                pendingProviderId = provider.id
+                _uiState.value = _uiState.value.copy(
+                    activeProviderBusy = false,
+                    activeProviderMessage = "Grant ${provider.displayName} access",
+                    pendingProviderConsent = outcome.pendingIntent,
+                )
+                return null
+            }
+        }
+    }
+
+    private suspend fun runProviderBackup(provider: CloudSyncProvider) {
+        val accounts = accountRepository.getAllAccounts()
+        val folders = accountRepository.getAllFolders()
+        val payload = id.azkura.auth.data.remote.BackupPayload(
+            accountsJson = kotlinx.serialization.encodeToString(accounts),
+            foldersJson = kotlinx.serialization.encodeToString(folders),
+            accountCount = accounts.size,
+            folderCount = folders.size,
+            versionName = id.azkura.auth.BuildConfig.VERSION_NAME,
+        )
+        val result = provider.backup(payload)
+        setProviderResult(
+            provider.id,
+            "Backup: ${result.fileName} (${result.accountCount} accounts, ${result.folderCount} folders)",
+        )
+    }
+
+    private suspend fun runProviderRestore(provider: CloudSyncProvider) {
+        val result = provider.restore()
+        setProviderResult(
+            provider.id,
+            "Restored ${result.importedAccounts} accounts, ${result.importedFolders} folders from ${result.fileName}",
+        )
+    }
+
+    private suspend fun handleProviderError(providerId: String, error: Exception) {
+        if (error is GoogleDriveAuthException) {
+            providerRegistry.getById(providerId)?.clearInvalidToken()
+        }
+        setProviderResult(providerId, error.message?.takeIf { it.isNotBlank() } ?: "Operation failed")
+    }
+
+    private fun setProviderResult(providerId: String, message: String) {
+        _uiState.value = _uiState.value.copy(
+            activeProviderId = providerId,
+            activeProviderBusy = false,
+            activeProviderMessage = message,
+            pendingProviderConsent = null,
+        )
     }
 }
