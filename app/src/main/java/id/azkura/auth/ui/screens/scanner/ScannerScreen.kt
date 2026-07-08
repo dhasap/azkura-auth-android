@@ -201,16 +201,64 @@ fun ScannerScreen(
         }
     }
 
+    // Fallback launcher for devices without the system Photo Picker
+    // (Android < 11, or OEMs that removed it). Uses ACTION_GET_CONTENT
+    // which is universally available.
+    val fallbackGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val scanner = barcodeScanner
+        if (scanner == null) {
+            errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
+            return@rememberLauncherForActivityResult
+        }
+        isProcessingGalleryImage = true
+        errorMessage = null
+        try {
+            val image = InputImage.fromFilePath(context, uri)
+            scanner.process(image)
+                .addOnSuccessListener { barcodes ->
+                    isProcessingGalleryImage = false
+                    val value = barcodes.firstNotNullOfOrNull { it.rawValue }
+                    if (value == null) {
+                        errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
+                    } else {
+                        handleScannedValue(value)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    isProcessingGalleryImage = false
+                    Log.w(TAG, "Fallback gallery QR decode failed", e)
+                    errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
+                }
+        } catch (e: Exception) {
+            isProcessingGalleryImage = false
+            Log.w(TAG, "Fallback unable to open selected image", e)
+            errorMessage = "Tidak dapat membuka gambar yang dipilih"
+        }
+    }
+
     fun launchGalleryPicker() {
         try {
-            galleryLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-            )
+            if (ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)) {
+                galleryLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            } else {
+                Log.i(TAG, "Photo picker not available, falling back to GetContent")
+                fallbackGalleryLauncher.launch("image/*")
+            }
         } catch (e: Exception) {
             // No app on the device can handle the picker intent, or the
-            // launcher failed to start — extremely rare, but must not crash.
-            Log.w(TAG, "Failed to launch gallery picker", e)
-            errorMessage = "Tidak dapat membuka galeri di perangkat ini"
+            // launcher failed to start — try the other launcher as fallback.
+            Log.w(TAG, "Primary gallery picker failed, trying fallback", e)
+            try {
+                fallbackGalleryLauncher.launch("image/*")
+            } catch (e2: Exception) {
+                Log.w(TAG, "Fallback gallery picker also failed", e2)
+                errorMessage = "Tidak dapat membuka galeri di perangkat ini"
+            }
         }
     }
 

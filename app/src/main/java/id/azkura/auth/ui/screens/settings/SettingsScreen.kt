@@ -3,6 +3,11 @@ package id.azkura.auth.ui.screens.settings
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -371,22 +376,42 @@ fun SettingsScreen(
     }
 
     state.googleMessage?.let { googleMsg ->
-        AlertDialog(
-            onDismissRequest = viewModel::clearGoogleMessage,
-            title = { Text("Google Drive") },
-            text = {
-                Text(
-                    text = googleMsg,
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = viewModel::clearGoogleMessage) {
-                    Text("OK", color = Accent)
-                }
-            },
-        )
+        val isSuccess = googleMsg.startsWith("Connected") || googleMsg.startsWith("Backup") || googleMsg.startsWith("Restored")
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it / 3 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 3 }),
+        ) {
+            AlertDialog(
+                onDismissRequest = viewModel::clearGoogleMessage,
+                icon = {
+                    Icon(
+                        imageVector = if (isSuccess) Icons.Default.Check else Icons.Default.CloudUpload,
+                        contentDescription = null,
+                        tint = if (isSuccess) Accent else TextSecondary,
+                        modifier = Modifier.size(32.dp),
+                    )
+                },
+                title = {
+                    Text(
+                        if (isSuccess) "Berhasil!" else "Google Drive",
+                        color = if (isSuccess) Accent else TextPrimary,
+                    )
+                },
+                text = {
+                    Text(
+                        text = googleMsg,
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = viewModel::clearGoogleMessage) {
+                        Text("OK", color = Accent)
+                    }
+                },
+            )
+        }
     }
 
     state.localBackupMessage?.let { backupMsg ->
