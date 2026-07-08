@@ -334,6 +334,7 @@ fun ScannerScreen(
                         lifecycleOwner = lifecycleOwner,
                         barcodeScanner = barcodeScanner,
                         hasScanned = hasScanned,
+                        isGalleryActive = isGalleryActive,
                         onBarcodeValue = ::handleScannedValue,
                     )
                 }
@@ -456,6 +457,7 @@ private fun BoxScope.CameraScannerContent(
     lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     barcodeScanner: com.google.mlkit.vision.barcode.BarcodeScanner?,
     hasScanned: Boolean,
+    isGalleryActive: Boolean,
     onBarcodeValue: (String?) -> Unit,
 ) {
     if (barcodeScanner == null) {
