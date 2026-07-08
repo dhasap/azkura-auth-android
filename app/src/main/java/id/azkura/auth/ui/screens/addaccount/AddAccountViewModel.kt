@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.util.UUID
 import javax.inject.Inject
 
@@ -242,8 +244,8 @@ class AddAccountViewModel @Inject constructor(
             val accounts = accountRepository.getAllAccounts()
             val folders = accountRepository.getAllFolders()
             val payload = id.azkura.auth.data.remote.BackupPayload(
-                accountsJson = kotlinx.serialization.json.Json.encodeToString(accounts),
-                foldersJson = kotlinx.serialization.json.Json.encodeToString(folders),
+                accountsJson = Json.encodeToString(accounts),
+                foldersJson = Json.encodeToString(folders),
                 accountCount = accounts.size,
                 folderCount = folders.size,
                 versionName = id.azkura.auth.BuildConfig.VERSION_NAME,
