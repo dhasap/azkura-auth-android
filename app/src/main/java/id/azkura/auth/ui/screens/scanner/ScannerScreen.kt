@@ -140,7 +140,15 @@ fun ScannerScreen(
 
     val barcodeScanner = remember {
         try {
-            BarcodeScanning.getClient()
+            // Configure scanner to detect QR codes specifically with higher success rate
+            val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(
+                    Barcode.FORMAT_QR_CODE,
+                    Barcode.FORMAT_AZTEC,
+                    Barcode.FORMAT_DATA_MATRIX,
+                )
+                .build()
+            com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to initialize barcode scanner", e)
             null
@@ -172,26 +180,47 @@ fun ScannerScreen(
         isProcessingGalleryImage = true
         errorMessage = null
         try {
-            val image = InputImage.fromFilePath(context, uri)
+            // Use contentResolver + InputImage.fromBitmap instead of
+            // InputImage.fromFilePath — the latter fails silently on
+            // some Xiaomi/MIUI devices even with READ_MEDIA_IMAGES granted.
+            val inputStream = context.contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                isProcessingGalleryImage = false
+                errorMessage = "Tidak dapat membuka gambar yang dipilih"
+                return@try
+            }
+            val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+            inputStream.close()
+
+            if (bitmap == null) {
+                isProcessingGalleryImage = false
+                errorMessage = "Gambar tidak valid atau format tidak didukung"
+                return@try
+            }
+
+            Log.i(TAG, "Gallery bitmap loaded: ${bitmap.width}x${bitmap.height}")
+            val image = InputImage.fromBitmap(bitmap, 0)
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     isProcessingGalleryImage = false
+                    Log.i(TAG, "ML Kit found ${barcodes.size} barcode(s)")
                     val value = barcodes.firstNotNullOfOrNull { it.rawValue }
                     if (value == null) {
                         errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
                     } else {
+                        Log.i(TAG, "QR value: ${value.take(50)}...")
                         handleScannedValue(value)
                     }
                 }
                 .addOnFailureListener { e ->
                     isProcessingGalleryImage = false
-                    Log.w(TAG, "Gallery QR decode failed", e)
-                    errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
+                    Log.e(TAG, "Gallery QR decode failed", e)
+                    errorMessage = "Gagal membaca gambar: ${e.message}"
                 }
         } catch (e: Exception) {
             isProcessingGalleryImage = false
-            Log.w(TAG, "Unable to open selected image", e)
-            errorMessage = "Tidak dapat membuka gambar yang dipilih"
+            Log.e(TAG, "Unable to open selected image", e)
+            errorMessage = "Tidak dapat membuka gambar: ${e.message}"
         }
     }
 
