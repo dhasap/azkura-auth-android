@@ -187,7 +187,7 @@ fun ScannerScreen(
             if (inputStream == null) {
                 isProcessingGalleryImage = false
                 errorMessage = "Tidak dapat membuka gambar yang dipilih"
-                return@try
+                return@processGalleryUri
             }
             val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
             inputStream.close()
@@ -195,7 +195,7 @@ fun ScannerScreen(
             if (bitmap == null) {
                 isProcessingGalleryImage = false
                 errorMessage = "Gambar tidak valid atau format tidak didukung"
-                return@try
+                return@processGalleryUri
             }
 
             Log.i(TAG, "Gallery bitmap loaded: ${bitmap.width}x${bitmap.height}")
