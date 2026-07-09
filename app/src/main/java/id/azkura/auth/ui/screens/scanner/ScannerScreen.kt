@@ -2,11 +2,11 @@ package id.azkura.auth.ui.screens.scanner
 
 import android.content.pm.PackageManager
 import android.Manifest
+import android.os.Build
 import android.net.Uri
 import android.util.Log
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -113,11 +113,6 @@ fun ScannerScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    // Some devices (tablets, emulators, foldables in certain configurations)
-    // have no camera at all. Detect this up front so we never request the
-    // CAMERA permission or try to bind CameraX on hardware that doesn't
-    // support it — doing so is a common source of crashes/ANRs on such
-    // devices. Gallery import remains fully available either way.
     val hasCamera = remember {
         try {
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
@@ -127,16 +122,22 @@ fun ScannerScreen(
     }
 
     val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
+
+    // Storage permission for gallery import (critical for Xiaomi/MIUI)
+    val mediaImagesPermission = rememberPermissionState(Manifest.permission.READ_MEDIA_IMAGES)
+    val storagePermission = rememberPermissionState(Manifest.permission.READ_EXTERNAL_STORAGE)
+    val hasMediaPermission = if (Build.VERSION.SDK_INT >= 33) {
+        mediaImagesPermission.status.isGranted
+    } else {
+        storagePermission.status.isGranted
+    }
+
     var hasScanned by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isProcessingGalleryImage by remember { mutableStateOf(false) }
     var isGalleryActive by remember { mutableStateOf(false) }
+    var pendingGalleryPick by remember { mutableStateOf(false) }
 
-    // The ML Kit barcode client is used by both the live camera analyzer and
-    // the gallery-import path. Creating it can theoretically fail if Google
-    // Play services / the on-device barcode model is unavailable or broken,
-    // so it is wrapped and re-attempted lazily rather than crashing the
-    // screen on entry.
     val barcodeScanner = remember {
         try {
             BarcodeScanning.getClient()
@@ -159,20 +160,14 @@ fun ScannerScreen(
             }
     }
 
-    // Photo Picker contract: needs NO storage/media permission on any
-    // supported API level (it runs the picker in a separate, system-owned
-    // process and only grants access to the single selected image). This
-    // avoids the permission-crash / permission-denial pitfalls of the older
-    // READ_EXTERNAL_STORAGE / READ_MEDIA_IMAGES flows entirely.
-    val galleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia(),
-    ) { uri: Uri? ->
+    // Process a URI from any gallery launcher
+    fun processGalleryUri(uri: Uri?) {
         isGalleryActive = false
-        if (uri == null) return@rememberLauncherForActivityResult
+        if (uri == null) return
         val scanner = barcodeScanner
         if (scanner == null) {
             errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
-            return@rememberLauncherForActivityResult
+            return
         }
         isProcessingGalleryImage = true
         errorMessage = null
@@ -194,134 +189,81 @@ fun ScannerScreen(
                     errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
                 }
         } catch (e: Exception) {
-            // InputImage.fromFilePath throws IOException for unreadable/
-            // corrupted/unsupported image files (e.g. a HEIC the device
-            // can't decode, a 0-byte file, or a revoked content:// grant).
             isProcessingGalleryImage = false
             Log.w(TAG, "Unable to open selected image", e)
             errorMessage = "Tidak dapat membuka gambar yang dipilih"
         }
     }
 
-    // Fallback launcher for devices without the system Photo Picker
-    // (Android < 11, or OEMs that removed it). Uses ACTION_GET_CONTENT
-    // which is universally available.
+    // Strategy 1: Photo Picker (API 30+)
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? ->
+        processGalleryUri(uri)
+    }
+
+    // Strategy 2: GetContent (universal fallback)
     val fallbackGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
-        isGalleryActive = false
-        if (uri == null) return@rememberLauncherForActivityResult
-        val scanner = barcodeScanner
-        if (scanner == null) {
-            errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
-            return@rememberLauncherForActivityResult
-        }
-        isProcessingGalleryImage = true
-        errorMessage = null
-        try {
-            val image = InputImage.fromFilePath(context, uri)
-            scanner.process(image)
-                .addOnSuccessListener { barcodes ->
-                    isProcessingGalleryImage = false
-                    val value = barcodes.firstNotNullOfOrNull { it.rawValue }
-                    if (value == null) {
-                        errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
-                    } else {
-                        handleScannedValue(value)
-                    }
-                }
-                .addOnFailureListener { e ->
-                    isProcessingGalleryImage = false
-                    Log.w(TAG, "Fallback gallery QR decode failed", e)
-                    errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
-                }
-        } catch (e: Exception) {
-            isProcessingGalleryImage = false
-            Log.w(TAG, "Fallback unable to open selected image", e)
-            errorMessage = "Tidak dapat membuka gambar yang dipilih"
-        }
+        processGalleryUri(uri)
     }
 
-    // Last-resort launcher using ACTION_PICK intent (Xiaomi/MIUI compatibility)
-    val galleryPickLauncher = rememberLauncherForActivityResult(
+    // Strategy 3: Simple ACTION_PICK intent (Xiaomi/MIUI compatible)
+    val simplePickLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
     ) { result ->
         isGalleryActive = false
-        val uri = result.data?.data
-        if (uri == null) {
-            errorMessage = "Tidak ada gambar dipilih"
-            return@rememberLauncherForActivityResult
-        }
-        val scanner = barcodeScanner
-        if (scanner == null) {
-            errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
-            return@rememberLauncherForActivityResult
-        }
-        isProcessingGalleryImage = true
-        errorMessage = null
-        try {
-            val image = InputImage.fromFilePath(context, uri)
-            scanner.process(image)
-                .addOnSuccessListener { barcodes ->
-                    isProcessingGalleryImage = false
-                    val value = barcodes.firstNotNullOfOrNull { it.rawValue }
-                    if (value == null) {
-                        errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
-                    } else {
-                        handleScannedValue(value)
-                    }
+        processGalleryUri(result.data?.data)
+    }
+
+    // When media permission is granted, launch the simple intent
+    LaunchedEffect(hasMediaPermission, pendingGalleryPick) {
+        if (hasMediaPermission && pendingGalleryPick) {
+            pendingGalleryPick = false
+            try {
+                val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
+                    type = "image/*"
                 }
-                .addOnFailureListener { e ->
-                    isProcessingGalleryImage = false
-                    Log.w(TAG, "ACTION_PICK QR decode failed", e)
-                    errorMessage = "Gagal membaca gambar. Pastikan gambar berisi kode QR yang jelas."
-                }
-        } catch (e: Exception) {
-            isProcessingGalleryImage = false
-            Log.w(TAG, "ACTION_PICK unable to open selected image", e)
-            errorMessage = "Tidak dapat membuka gambar yang dipilih"
+                simplePickLauncher.launch(pickIntent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Simple gallery intent failed", e)
+                errorMessage = "Tidak dapat membuka galeri"
+            }
         }
     }
 
     fun launchGalleryPicker() {
-        // Strategy 1: Android Photo Picker (API 30+)
-        // Strategy 2: GetContent (universal fallback)
-        // Strategy 3: ACTION_PICK (Xiaomi/MIUI compatibility)
-        // Strategy 4: ACTION_GET_CONTENT as last resort
-        val used = try {
-            if (ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)) {
-                isGalleryActive = true
-                galleryLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                )
-                true
+        isGalleryActive = true
+        // On Xiaomi/MIUI, PickVisualMedia silently fails (no callback at all).
+        // Instead of trying broken intents, use the permission-based approach:
+        // 1. Request READ_MEDIA_IMAGES (Android 13+) or READ_EXTERNAL_STORAGE
+        // 2. When granted, use simple ACTION_PICK intent which works everywhere
+        if (!hasMediaPermission) {
+            // Request permission first — the LaunchedEffect above will launch
+            // the gallery when permission is granted.
+            pendingGalleryPick = true
+            if (Build.VERSION.SDK_INT >= 33) {
+                mediaImagesPermission.launchPermissionRequest()
             } else {
-                false
+                storagePermission.launchPermissionRequest()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Photo picker failed", e)
-            isGalleryActive = false
-            false
+            return
         }
 
-        if (!used) {
-            // Try GetContent fallback
+        // Permission already granted — try simple ACTION_PICK first (most reliable)
+        try {
+            val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
+                type = "image/*"
+            }
+            simplePickLauncher.launch(pickIntent)
+        } catch (e: Exception) {
+            // Fallback to GetContent
             try {
-                isGalleryActive = true
                 fallbackGalleryLauncher.launch("image/*")
-            } catch (e: Exception) {
-                Log.w(TAG, "GetContent fallback failed", e)
-                isGalleryActive = false
-                // Last resort: ACTION_PICK intent (works on most MIUI devices)
-                try {
-                    val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
-                        type = "image/*"
-                    }
-                    galleryPickLauncher.launch(pickIntent)
-                } catch (e2: Exception) {
-                    Log.w(TAG, "ACTION_PICK also failed", e2)
-                    errorMessage = "Tidak dapat membuka galeri di perangkat ini"
-                }
+            } catch (e2: Exception) {
+                Log.w(TAG, "All gallery intents failed", e2)
+                errorMessage = "Tidak dapat membuka galeri di perangkat ini"
             }
         }
     }
