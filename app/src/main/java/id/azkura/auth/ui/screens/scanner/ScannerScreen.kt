@@ -189,8 +189,30 @@ fun ScannerScreen(
                 errorMessage = "Tidak dapat membuka gambar yang dipilih"
                 return@processGalleryUri
             }
-            val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+
+            // Decode with downsampling to avoid OOM on large screenshots
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
             inputStream.close()
+
+            val width = options.outWidth
+            val height = options.outHeight
+            var inSampleSize = 1
+            // Target max 1024px on longest side for ML Kit
+            while (width / inSampleSize > 1024 || height / inSampleSize > 1024) {
+                inSampleSize *= 2
+            }
+
+            Log.i(TAG, "Image size: ${width}x${height}, inSampleSize=$inSampleSize")
+
+            val decodeStream = context.contentResolver.openInputStream(uri)
+            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+            }
+            val bitmap = android.graphics.BitmapFactory.decodeStream(decodeStream, null, decodeOptions)
+            decodeStream?.close()
 
             if (bitmap == null) {
                 isProcessingGalleryImage = false
@@ -208,7 +230,7 @@ fun ScannerScreen(
                     if (value == null) {
                         errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
                     } else {
-                        Log.i(TAG, "QR value: ${value.take(50)}...")
+                        Log.i(TAG, "QR value: ${value.take(80)}...")
                         handleScannedValue(value)
                     }
                 }
