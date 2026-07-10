@@ -182,7 +182,7 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: |
             azkura-auth-*-release.apk
-            app/build/outputs/bundle/release/*.aab
+            *.aab
           fail_on_unmatched_files: false
           generate_release_notes: true
         env:
