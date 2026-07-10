@@ -122,6 +122,7 @@ fun SettingsScreen(
     val googleAuthorizationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
+        android.util.Log.d("SettingsScreen", "googleAuthorizationLauncher result: resultCode=${result.resultCode}")
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.onGoogleAuthorizationResult(result.data)
         } else {
@@ -131,12 +132,14 @@ fun SettingsScreen(
 
     LaunchedEffect(state.pendingGoogleAuthorization) {
         val pendingIntent = state.pendingGoogleAuthorization ?: return@LaunchedEffect
+        android.util.Log.d("SettingsScreen", "Launching Google consent PendingIntent")
         try {
             googleAuthorizationLauncher.launch(
                 IntentSenderRequest.Builder(pendingIntent.intentSender).build(),
             )
             viewModel.onGoogleAuthorizationLaunched()
         } catch (error: Exception) {
+            android.util.Log.w("SettingsScreen", "Failed to launch Google consent intent", error)
             viewModel.onGoogleAuthorizationLaunchFailed(
                 error.message ?: "Unable to launch Google sign-in",
             )

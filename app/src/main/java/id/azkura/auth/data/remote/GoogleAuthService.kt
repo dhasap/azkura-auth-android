@@ -108,6 +108,7 @@ class GoogleAuthService @Inject constructor(
                     ?.takeIf { it.isNotBlank() }
                     ?.let { email -> builder.setAccount(AndroidAccount(email, GOOGLE_ACCOUNT_TYPE)) }
 
+                Log.d(TAG, "authorize: requesting scopes $GOOGLE_SCOPES")
                 val result = Identity.getAuthorizationClient(activity)
                     .authorize(builder.build())
                     .await()
@@ -136,11 +137,26 @@ class GoogleAuthService @Inject constructor(
     suspend fun signIn(activity: Activity): GoogleAuthorizationOutcome = authorize(activity)
 
     /**
-     * Convert the ActivityResult data from a Google consent PendingIntent into an
-     * authorized session and persist it.
+     * Convert the ActivityResult data from a Google consent PendingIntent into
+     * either a fully authorized session, or ANOTHER resolution the caller must
+     * launch.
+     *
+     * Root cause of the previous "must press Connect twice" bug: Google's
+     * Identity Services AuthorizationClient can require more than one round
+     * of user consent for a single sign-in — e.g. the account picker is one
+     * resolution, and granting the `drive.file` scope to a not-yet-trusted
+     * app can be a SECOND, separate resolution. The old implementation only
+     * handled a single round-trip and *threw* if a second resolution was
+     * needed, which surfaced as a generic error and reset the UI — so the
+     * user had to tap "Connect" again from scratch (which then usually
+     * succeeded immediately, because the account was already cached).
+     * Returning [GoogleAuthorizationOutcome] here — instead of throwing —
+     * lets the caller keep launching each subsequent PendingIntent in the
+     * same "Connect" tap until the flow is genuinely done.
      */
-    suspend fun handleAuthorizationResult(intent: Intent?): GoogleAuthorizedSession {
+    suspend fun handleAuthorizationResult(intent: Intent?): GoogleAuthorizationOutcome {
         if (intent == null) {
+            Log.w(TAG, "handleAuthorizationResult called with null intent (user cancelled or launch failed)")
             throw GoogleSignInException.Cancelled()
         }
 
@@ -151,10 +167,12 @@ class GoogleAuthService @Inject constructor(
             throw error.toSignInException()
         }
 
-        return when (val outcome = processAuthorizationResult(result)) {
-            is GoogleAuthorizationOutcome.Authorized -> outcome.session
-            is GoogleAuthorizationOutcome.NeedsResolution -> {
-                throw GoogleSignInException.Unknown("Google sign-in still requires user consent")
+        return processAuthorizationResult(result).also { outcome ->
+            when (outcome) {
+                is GoogleAuthorizationOutcome.Authorized ->
+                    Log.d(TAG, "handleAuthorizationResult: fully authorized for ${outcome.session.user.email}")
+                is GoogleAuthorizationOutcome.NeedsResolution ->
+                    Log.d(TAG, "handleAuthorizationResult: another consent round is required, chaining resolution")
             }
         }
     }
@@ -191,6 +209,7 @@ class GoogleAuthService @Inject constructor(
         if (result.hasResolution()) {
             val pendingIntent = result.pendingIntent
                 ?: throw GoogleSignInException.Unknown("Google authorization requires consent but no resolution was returned")
+            Log.d(TAG, "processAuthorizationResult: result.hasResolution() == true, returning NeedsResolution")
             return GoogleAuthorizationOutcome.NeedsResolution(pendingIntent)
         }
 

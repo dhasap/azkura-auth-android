@@ -225,14 +225,19 @@ fun ScannerScreen(
     }
 
     fun handleScannedValue(value: String?) {
-        if (hasScanned) return
+        if (hasScanned) {
+            Log.d(TAG, "handleScannedValue: ignored, an account was already scanned this session")
+            return
+        }
         validateOtpauthPayload(value)
             .onSuccess { uri ->
+                Log.i(TAG, "handleScannedValue: valid otpauth payload, navigating to Add Account")
                 hasScanned = true
                 errorMessage = null
                 onAccountScanned(uri)
             }
             .onFailure { error ->
+                Log.w(TAG, "handleScannedValue: rejected payload — ${error.message}")
                 errorMessage = error.message
             }
     }
@@ -243,9 +248,18 @@ fun ScannerScreen(
     // yet cached locally) can never freeze the UI thread while it loads.
     fun processGalleryUri(uri: Uri?) {
         isGalleryActive = false
-        if (uri == null) return
+        if (uri == null) {
+            // The user backed out of the picker without choosing anything —
+            // this is a normal cancel, not a failure, so no error is shown.
+            // Logged so a "nothing happened" report can be told apart from
+            // a genuine decode/ML Kit failure in logcat.
+            Log.d(TAG, "processGalleryUri: picker returned null URI (user cancelled)")
+            return
+        }
+        Log.i(TAG, "processGalleryUri: received URI $uri, starting decode")
         val scanner = barcodeScanner
         if (scanner == null) {
+            Log.e(TAG, "processGalleryUri: barcodeScanner is null, ML Kit failed to initialize")
             errorMessage = "Pemindai QR tidak tersedia di perangkat ini"
             return
         }
@@ -256,36 +270,38 @@ fun ScannerScreen(
             val decoded = try {
                 withContext(Dispatchers.IO) { decodeGalleryImage(context, uri) }
             } catch (e: Exception) {
-                Log.e(TAG, "Unable to open selected image", e)
+                Log.e(TAG, "processGalleryUri: unable to open/decode selected image", e)
                 isProcessingGalleryImage = false
-                errorMessage = "Tidak dapat membuka gambar: ${e.message}"
+                errorMessage = "Tidak dapat membuka gambar: ${e.message ?: e.javaClass.simpleName}"
                 return@launch
             }
 
             if (decoded == null) {
+                Log.e(TAG, "processGalleryUri: decodeGalleryImage returned null (openInputStream/decodeStream failed)")
                 isProcessingGalleryImage = false
                 errorMessage = "Gambar tidak valid, rusak, atau formatnya tidak didukung"
                 return@launch
             }
 
-            Log.i(TAG, "Gallery bitmap loaded: ${decoded.bitmap.width}x${decoded.bitmap.height}")
+            Log.i(TAG, "processGalleryUri: bitmap loaded ${decoded.bitmap.width}x${decoded.bitmap.height}, rotation=${decoded.rotationDegrees}, running ML Kit")
             val image = InputImage.fromBitmap(decoded.bitmap, decoded.rotationDegrees)
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     isProcessingGalleryImage = false
-                    Log.i(TAG, "ML Kit found ${barcodes.size} barcode(s)")
+                    Log.i(TAG, "processGalleryUri: ML Kit found ${barcodes.size} barcode(s)")
                     val value = barcodes.firstNotNullOfOrNull { it.rawValue }
                     if (value == null) {
+                        Log.w(TAG, "processGalleryUri: ${barcodes.size} barcode(s) found but none had a rawValue")
                         errorMessage = "Tidak ditemukan kode QR pada gambar yang dipilih"
                     } else {
-                        Log.i(TAG, "QR value: ${value.take(80)}...")
+                        Log.i(TAG, "processGalleryUri: QR value: ${value.take(80)}...")
                         handleScannedValue(value)
                     }
                 }
                 .addOnFailureListener { e ->
                     isProcessingGalleryImage = false
-                    Log.e(TAG, "Gallery QR decode failed", e)
-                    errorMessage = "Gagal membaca gambar: ${e.message}"
+                    Log.e(TAG, "processGalleryUri: ML Kit process() failed", e)
+                    errorMessage = "Gagal membaca gambar: ${e.message ?: e.javaClass.simpleName}"
                 }
         }
     }
@@ -301,6 +317,7 @@ fun ScannerScreen(
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? ->
+        Log.i(TAG, "galleryLauncher (Photo Picker) callback fired, uri=$uri")
         processGalleryUri(uri)
     }
 
@@ -311,6 +328,7 @@ fun ScannerScreen(
     val fallbackGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
+        Log.i(TAG, "fallbackGalleryLauncher (GetContent) callback fired, uri=$uri")
         processGalleryUri(uri)
     }
 
@@ -322,12 +340,14 @@ fun ScannerScreen(
             Log.w(TAG, "isPhotoPickerAvailable check failed", e)
             false
         }
+        Log.d(TAG, "launchGalleryPicker: photoPickerAvailable=$photoPickerAvailable")
 
         if (photoPickerAvailable) {
             try {
                 galleryLauncher.launch(
                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                 )
+                Log.d(TAG, "launchGalleryPicker: Photo Picker launched")
                 return
             } catch (e: Exception) {
                 Log.w(TAG, "Photo Picker launch failed, falling back to GetContent", e)
@@ -336,6 +356,7 @@ fun ScannerScreen(
 
         try {
             fallbackGalleryLauncher.launch("image/*")
+            Log.d(TAG, "launchGalleryPicker: GetContent fallback launched")
         } catch (e: Exception) {
             isGalleryActive = false
             Log.e(TAG, "All gallery pickers failed", e)
@@ -347,6 +368,35 @@ fun ScannerScreen(
         if (hasCamera && !cameraPermission.status.isGranted) {
             cameraPermission.launchPermissionRequest()
         }
+    }
+
+    // Safety net for a documented real-world failure mode on some heavily
+    // customized ROMs (e.g. certain Xiaomi/MIUI builds): the gallery picker
+    // Activity can return to the app WITHOUT ever invoking the
+    // ActivityResultContract callback above — no exception, no uri, no
+    // callback at all — which previously looked exactly like "nothing
+    // happens" with zero feedback. There is no exception to catch for that
+    // case, so instead: when the app comes back to the foreground
+    // (ON_RESUME) after a picker was launched, wait briefly for the normal
+    // callback to arrive first, then — if isGalleryActive is *still* true —
+    // treat it as a failed picker launch and show a clear, actionable error
+    // instead of staying silent forever.
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                coroutineScope.launch {
+                    kotlinx.coroutines.delay(700)
+                    if (isGalleryActive) {
+                        Log.e(TAG, "Gallery picker never invoked its result callback after resume — treating as failed")
+                        isGalleryActive = false
+                        isProcessingGalleryImage = false
+                        errorMessage = "Galeri tidak merespons. Coba lagi, atau gunakan pemindai kamera."
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     DisposableEffect(Unit) {

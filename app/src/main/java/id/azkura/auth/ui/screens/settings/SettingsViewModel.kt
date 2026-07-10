@@ -237,19 +237,23 @@ class SettingsViewModel @Inject constructor(
 
     fun onConnectGoogle(activity: Activity) {
         viewModelScope.launch {
+            Log.d(TAG, "onConnectGoogle: starting sign-in")
             startGoogleOperation()
             try {
                 when (val outcome = googleAuthService.signIn(activity)) {
                     is GoogleAuthorizationOutcome.Authorized -> {
+                        Log.d(TAG, "onConnectGoogle: authorized immediately for ${outcome.session.user.email}")
                         refreshState("Terhubung sebagai ${outcome.session.user.email}")
                         launchAutoSyncAfterLogin(outcome.session.accessToken)
                     }
                     is GoogleAuthorizationOutcome.NeedsResolution -> {
+                        Log.d(TAG, "onConnectGoogle: consent required, launching resolution")
                         pendingGoogleAction = PendingGoogleAction.SIGN_IN
                         requestGoogleResolution(outcome.pendingIntent, "Complete Google sign-in to continue")
                     }
                 }
             } catch (error: Exception) {
+                Log.w(TAG, "onConnectGoogle: sign-in failed", error)
                 handleGoogleOperationFailure(error)
             }
         }
@@ -312,19 +316,40 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             startGoogleOperation()
             val action = pendingGoogleAction ?: PendingGoogleAction.SIGN_IN
-            pendingGoogleAction = null
+            Log.d(TAG, "onGoogleAuthorizationResult: resolving pending action=$action")
 
             try {
-                val session = googleAuthService.handleAuthorizationResult(intent)
-                when (action) {
-                    PendingGoogleAction.SIGN_IN -> {
-                        refreshState("Terhubung sebagai ${session.user.email}")
-                        launchAutoSyncAfterLogin(session.accessToken)
+                when (val outcome = googleAuthService.handleAuthorizationResult(intent)) {
+                    is GoogleAuthorizationOutcome.Authorized -> {
+                        pendingGoogleAction = null
+                        val session = outcome.session
+                        when (action) {
+                            PendingGoogleAction.SIGN_IN -> {
+                                refreshState("Terhubung sebagai ${session.user.email}")
+                                launchAutoSyncAfterLogin(session.accessToken)
+                            }
+                            PendingGoogleAction.BACKUP -> performBackup(session.accessToken)
+                            PendingGoogleAction.RESTORE -> performRestore(session.accessToken)
+                        }
                     }
-                    PendingGoogleAction.BACKUP -> performBackup(session.accessToken)
-                    PendingGoogleAction.RESTORE -> performRestore(session.accessToken)
+                    is GoogleAuthorizationOutcome.NeedsResolution -> {
+                        // Root cause of "must press Connect twice": Google's
+                        // AuthorizationClient can require a SECOND consent
+                        // screen (e.g. account selection, then a separate
+                        // Drive scope grant). The previous code only handled
+                        // one round-trip and failed here, forcing the user
+                        // to restart the whole flow. Instead, keep the same
+                        // pending action and immediately chain into the next
+                        // PendingIntent so the user only ever taps "Connect"
+                        // once.
+                        Log.d(TAG, "onGoogleAuthorizationResult: second consent round required, chaining ($action)")
+                        pendingGoogleAction = action
+                        requestGoogleResolution(outcome.pendingIntent, "Complete Google sign-in to continue")
+                    }
                 }
             } catch (error: Exception) {
+                pendingGoogleAction = null
+                Log.w(TAG, "onGoogleAuthorizationResult: failed for action=$action", error)
                 handleGoogleOperationFailure(error)
             }
         }
@@ -470,6 +495,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun requestGoogleResolution(pendingIntent: PendingIntent, message: String) {
+        Log.d(TAG, "requestGoogleResolution: requesting user consent ($message)")
         _uiState.value = _uiState.value.copy(
             isGoogleBusy = false,
             googleMessage = message,
