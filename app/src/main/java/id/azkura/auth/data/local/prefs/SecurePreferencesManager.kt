@@ -22,6 +22,7 @@ import javax.inject.Singleton
  * work since it touches persisted OAuth token/backup-password data formats.
  */
 @Singleton
+@Suppress("DEPRECATION") // EncryptedSharedPreferences/MasterKey deprecation — see class doc above.
 class SecurePreferencesManager @Inject constructor(
     @ApplicationContext context: Context,
 ) {
