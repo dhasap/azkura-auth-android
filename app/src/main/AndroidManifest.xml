@@ -3,9 +3,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!--
+        Gallery QR import uses the Android Photo Picker (ActivityResultContracts.PickVisualMedia)
+        with a GetContent() fallback. Both grant per-file, one-shot read access without any
+        runtime permission, so READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE are intentionally NOT
+        declared here (least-privilege — see ScannerScreen.kt).
+    -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.VIBRATE" />
 

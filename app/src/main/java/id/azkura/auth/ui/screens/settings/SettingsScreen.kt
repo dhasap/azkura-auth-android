@@ -376,7 +376,8 @@ fun SettingsScreen(
     }
 
     state.googleMessage?.let { googleMsg ->
-        val isSuccess = googleMsg.startsWith("Connected") || googleMsg.startsWith("Backup") || googleMsg.startsWith("Restored")
+        val isSuccess = googleMsg.startsWith("Connected") || googleMsg.startsWith("Terhubung") ||
+            googleMsg.startsWith("Backup") || googleMsg.startsWith("Restored")
         AnimatedVisibility(
             visible = true,
             enter = fadeIn() + slideInVertically(initialOffsetY = { it / 3 }),
@@ -431,6 +432,14 @@ fun SettingsScreen(
                 }
             },
         )
+    }
+
+    // Auto-dismiss the small auto-sync status pill after it's had time to be read.
+    LaunchedEffect(state.autoSyncStatus, state.isAutoSyncing) {
+        if (state.autoSyncStatus != null && !state.isAutoSyncing) {
+            kotlinx.coroutines.delay(5000)
+            viewModel.clearAutoSyncStatus()
+        }
     }
 
     Scaffold(
@@ -505,6 +514,38 @@ fun SettingsScreen(
 
             SectionHeader("Backup")
 
+            AnimatedVisibility(
+                visible = state.isAutoSyncing || state.autoSyncStatus != null,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { -it / 2 }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { -it / 2 }),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Accent.copy(alpha = 0.10f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (state.isAutoSyncing) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            color = Accent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    } else {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = Accent, modifier = Modifier.size(16.dp))
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = state.autoSyncStatus ?: "Menyinkronkan...",
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
             SettingsItem(
                 icon = Icons.Default.Person,
                 title = "Google Account",
@@ -521,10 +562,24 @@ fun SettingsScreen(
                             }
                         },
                     ) {
-                        Text(
-                            text = if (state.googleUserEmail == null) "Connect" else "Disconnect",
-                            color = Accent,
-                        )
+                        androidx.compose.animation.Crossfade(targetState = state.isGoogleBusy) { busy ->
+                            if (busy) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        color = Accent,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Menghubungkan...", color = Accent)
+                                }
+                            } else {
+                                Text(
+                                    text = if (state.googleUserEmail == null) "Connect" else "Disconnect",
+                                    color = Accent,
+                                )
+                            }
+                        }
                     }
                 },
             )

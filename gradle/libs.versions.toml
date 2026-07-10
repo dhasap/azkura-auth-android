@@ -25,6 +25,7 @@ junit = "4.13.2"
 androidxJunit = "1.2.1"
 espresso = "3.6.1"
 accompanistPermissions = "0.36.0"
+exifinterface = "1.3.7"
 lifecycleRuntimeCompose = "2.8.7"
 
 [libraries]
@@ -80,6 +81,7 @@ androidx-junit = { module = "androidx.test.ext:junit", version.ref = "androidxJu
 androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
 
 accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "accompanistPermissions" }
+androidx-exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
 
 [plugins]

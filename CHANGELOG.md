@@ -4,6 +4,60 @@ All notable changes to Azkura Auth Android are documented here.
 
 The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows the app's Android `versionName` / `versionCode` metadata.
 
+## [2.13.0] - 2026-07-10
+
+### Fixed
+
+- **Gallery QR scan (root cause, not just symptoms).** The previous
+  implementation required `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE` and
+  drove gallery import through a legacy `ACTION_PICK` intent; if the user
+  denied that permission (common on Android 13+) gallery import was
+  completely blocked, even though the modern permission-less Photo Picker
+  was already wired up but never actually called. Rewrote
+  `ScannerScreen.kt` to use `ActivityResultContracts.PickVisualMedia`
+  (official Android Photo Picker, no runtime permission required) as the
+  primary path, with `GetContent()` as an automatic fallback via
+  `isPhotoPickerAvailable()` for devices without a compatible picker.
+  `READ_MEDIA_IMAGES` / `READ_EXTERNAL_STORAGE` are no longer declared in
+  the manifest (least-privilege).
+- Gallery QR: bitmap decode + ContentResolver I/O now run on
+  `Dispatchers.IO` instead of the Compose main thread, so a large photo or
+  a not-yet-cached cloud gallery item (Google Photos) can no longer stall
+  the UI.
+- Gallery QR: EXIF orientation is now read via `androidx.exifinterface`
+  and passed to `InputImage.fromBitmap(bitmap, rotationDegrees)`, improving
+  decode success for portrait/rotated photos.
+
+### Added
+
+- **Auto Backup after Google login.** Signing in with Google now
+  automatically triggers a backup to Drive in the background (no blocking
+  UI), with up to 3 retries using exponential backoff on transient
+  failures, and structured `Log.d/w/e` logging (`SettingsViewModel`,
+  `GoogleDriveService`) for debugging.
+- **Auto Restore after Google login.** After login, the app checks Google
+  Drive for an existing backup and restores it automatically if found.
+  Restore uses the existing additive merge (`mergeAccounts`/`mergeFolders`)
+  which only adds missing accounts/folders and never deletes or overwrites
+  local data, so an older or already-merged backup can never cause data
+  loss. Backups with missing/unparseable metadata are skipped defensively.
+- Classified Google sign-in errors (`GoogleSignInException`): cancelled,
+  no network, token error, session expired, Play services problem, or
+  timeout (25s) — each with a specific, actionable Indonesian message
+  instead of a raw SDK exception string.
+- Small, non-blocking auto-sync status indicator + animated Connect/Backup
+  button state (spinner + label) in Settings, instead of a static "Connect"
+  label with no feedback while the request is in flight.
+- **Recent Apps preview.** The app previously showed a solid black
+  thumbnail in the Recents/App Switcher because `FLAG_SECURE` blocks the OS
+  from capturing *any* image of the window, including the Recents
+  snapshot. Added a Compose `PrivacyOverlay` that is shown before
+  `FLAG_SECURE` is briefly cleared in `onPause()` (so the Recents snapshot
+  captures only the safe, branded blurred overlay) and `FLAG_SECURE` is
+  restored before the overlay is hidden again in `onResume()`. No sensitive
+  content is ever exposed to a screenshot/recording at any point — security
+  level is unchanged, only the Recents thumbnail's appearance improves.
+
 ## [2.12.7] - 2026-07-09
 
 ### Fixed

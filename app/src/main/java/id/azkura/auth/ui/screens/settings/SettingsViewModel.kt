@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -17,6 +18,7 @@ import id.azkura.auth.data.remote.GoogleAuthService
 import id.azkura.auth.data.remote.GoogleAuthorizationOutcome
 import id.azkura.auth.data.remote.GoogleDriveAuthException
 import id.azkura.auth.data.remote.GoogleDriveService
+import id.azkura.auth.data.remote.GoogleSignInException
 import id.azkura.auth.data.remote.CloudSyncProviderRegistry
 import id.azkura.auth.data.remote.ConnectResult
 import id.azkura.auth.data.remote.CloudSyncProvider
@@ -25,6 +27,7 @@ import kotlinx.serialization.json.Json
 import id.azkura.auth.data.repository.AccountRepository
 import id.azkura.auth.util.BiometricHelper
 import id.azkura.auth.util.LocalBackupManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +37,12 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import javax.inject.Inject
+
+private const val TAG = "SettingsViewModel"
+
+/** Auto-backup after login retries up to this many times, with exponential backoff. */
+private const val AUTO_SYNC_MAX_ATTEMPTS = 3
+private const val AUTO_SYNC_INITIAL_BACKOFF_MS = 2_000L
 
 data class SettingsUiState(
     val pinEnabled: Boolean = false,
@@ -54,6 +63,10 @@ data class SettingsUiState(
     val isGoogleBusy: Boolean = false,
     val googleMessage: String? = null,
     val pendingGoogleAuthorization: PendingIntent? = null,
+    // Non-blocking background auto-backup/auto-restore status shown as a
+    // small inline indicator (never a full-screen blocker) after login.
+    val isAutoSyncing: Boolean = false,
+    val autoSyncStatus: String? = null,
     val localBackupMessage: String? = null,
     val pendingExportUri: Boolean = false,
     val encryptBackup: Boolean = false,
@@ -228,7 +241,8 @@ class SettingsViewModel @Inject constructor(
             try {
                 when (val outcome = googleAuthService.signIn(activity)) {
                     is GoogleAuthorizationOutcome.Authorized -> {
-                        refreshState("Connected as ${outcome.session.user.email}")
+                        refreshState("Terhubung sebagai ${outcome.session.user.email}")
+                        launchAutoSyncAfterLogin(outcome.session.accessToken)
                     }
                     is GoogleAuthorizationOutcome.NeedsResolution -> {
                         pendingGoogleAction = PendingGoogleAction.SIGN_IN
@@ -303,7 +317,10 @@ class SettingsViewModel @Inject constructor(
             try {
                 val session = googleAuthService.handleAuthorizationResult(intent)
                 when (action) {
-                    PendingGoogleAction.SIGN_IN -> refreshState("Connected as ${session.user.email}")
+                    PendingGoogleAction.SIGN_IN -> {
+                        refreshState("Terhubung sebagai ${session.user.email}")
+                        launchAutoSyncAfterLogin(session.accessToken)
+                    }
                     PendingGoogleAction.BACKUP -> performBackup(session.accessToken)
                     PendingGoogleAction.RESTORE -> performRestore(session.accessToken)
                 }
@@ -478,8 +495,117 @@ class SettingsViewModel @Inject constructor(
         if (error is GoogleDriveAuthException) {
             googleAuthService.clearInvalidToken()
         }
+        // GoogleSignInException subtypes already carry a classified,
+        // Indonesian, user-actionable message (cancelled / no network /
+        // token error / session expired / Play services problem) — use it
+        // verbatim instead of falling through to a generic string.
         val message = error.message?.takeIf { it.isNotBlank() } ?: "Google operation failed"
         refreshState(message)
+    }
+
+    // ── Auto backup + auto restore after login ──────────────────────────
+    //
+    // Runs in its own fire-and-forget coroutine (launched from onConnectGoogle
+    // / onGoogleAuthorizationResult) so it never blocks or delays the
+    // "Connected" confirmation the user already sees, and never freezes the
+    // UI thread. Progress is surfaced only through the small, dismissible
+    // `autoSyncStatus` state — never a blocking dialog — per the requirement
+    // that this must not degrade app performance/UX.
+
+    private fun launchAutoSyncAfterLogin(accessToken: String) {
+        viewModelScope.launch {
+            runAutoSyncAfterLogin(accessToken)
+        }
+    }
+
+    private suspend fun runAutoSyncAfterLogin(accessToken: String) {
+        _uiState.value = _uiState.value.copy(isAutoSyncing = true, autoSyncStatus = "Memeriksa data backup...")
+        Log.d(TAG, "Auto-sync: starting post-login check")
+
+        // 1) Auto-restore, only if a backup actually exists.
+        try {
+            val backups = googleDriveService.listBackups(accessToken, maxResults = 1)
+            val latest = backups.firstOrNull()
+            when {
+                latest == null -> {
+                    Log.d(TAG, "Auto-sync: no existing backup found — continuing with local data only")
+                }
+                latest.createdTime.isNullOrBlank() -> {
+                    // Can't verify freshness/validity of this backup entry — skip
+                    // auto-restore rather than risk merging unverified data in.
+                    Log.w(TAG, "Auto-sync: backup '${latest.name}' has no createdTime, skipping auto-restore")
+                }
+                else -> {
+                    _uiState.value = _uiState.value.copy(autoSyncStatus = "Memulihkan data dari backup...")
+                    // GoogleDriveService.restoreFile() performs a purely
+                    // additive merge (see mergeAccounts/mergeFolders) — it
+                    // only ADDS accounts/folders that don't already exist
+                    // locally and never deletes or overwrites anything, so
+                    // an older backup can never destroy newer local data.
+                    val restoreResult = googleDriveService.restoreLatest(accessToken)
+                    Log.d(
+                        TAG,
+                        "Auto-sync: restore complete — added ${restoreResult.importedAccounts} account(s), " +
+                            "${restoreResult.importedFolders} folder(s) from ${restoreResult.fileName}",
+                    )
+                    if (restoreResult.importedAccounts > 0 || restoreResult.importedFolders > 0) {
+                        _uiState.value = _uiState.value.copy(
+                            autoSyncStatus = "Berhasil memulihkan ${restoreResult.importedAccounts} akun dari backup",
+                            totalAccounts = accountRepository.getAccountCount(),
+                        )
+                    }
+                }
+            }
+        } catch (error: Exception) {
+            // Auto-restore is best-effort: never let it block auto-backup or
+            // surface as a hard failure to the user.
+            Log.w(TAG, "Auto-sync: auto-restore skipped due to error", error)
+        }
+
+        // 2) Auto-backup, with retry + exponential backoff so a transient
+        // network blip right after login doesn't silently lose the backup.
+        _uiState.value = _uiState.value.copy(autoSyncStatus = "Membuat backup otomatis...")
+        var attempt = 0
+        var lastError: Exception? = null
+        var backupSucceeded = false
+        while (attempt < AUTO_SYNC_MAX_ATTEMPTS && !backupSucceeded) {
+            attempt += 1
+            try {
+                val result = googleDriveService.backupDetailed(accessToken)
+                preferencesManager.setLastAutoBackupAt(System.currentTimeMillis().toString())
+                backupSucceeded = true
+                Log.d(TAG, "Auto-sync: backup succeeded on attempt $attempt (${result.fileName})")
+                _uiState.value = _uiState.value.copy(
+                    isAutoSyncing = false,
+                    autoSyncStatus = "Auto-backup berhasil (${result.accountCount} akun)",
+                    lastBackup = formatTimestamp(System.currentTimeMillis().toString()),
+                )
+            } catch (error: Exception) {
+                lastError = error
+                Log.w(TAG, "Auto-sync: backup attempt $attempt/$AUTO_SYNC_MAX_ATTEMPTS failed", error)
+                if (error is GoogleDriveAuthException) {
+                    // Retrying with a known-bad token can't succeed — stop early.
+                    googleAuthService.clearInvalidToken()
+                    break
+                }
+                if (attempt < AUTO_SYNC_MAX_ATTEMPTS) {
+                    delay(AUTO_SYNC_INITIAL_BACKOFF_MS * (1L shl (attempt - 1)))
+                }
+            }
+        }
+
+        if (!backupSucceeded) {
+            Log.e(TAG, "Auto-sync: backup failed after $attempt attempt(s)", lastError)
+            _uiState.value = _uiState.value.copy(
+                isAutoSyncing = false,
+                autoSyncStatus = "Auto-backup belum berhasil: ${lastError?.message ?: "unknown error"}. " +
+                    "Anda tetap bisa backup manual dari menu di bawah.",
+            )
+        }
+    }
+
+    fun clearAutoSyncStatus() {
+        _uiState.value = _uiState.value.copy(autoSyncStatus = null)
     }
 
     private fun formatTimestamp(value: String?): String? {

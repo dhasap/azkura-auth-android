@@ -2,11 +2,11 @@ package id.azkura.auth.ui.screens.scanner
 
 import android.content.pm.PackageManager
 import android.Manifest
-import android.os.Build
 import android.net.Uri
 import android.util.Log
 import android.util.Size
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -47,6 +47,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
@@ -74,9 +76,15 @@ import id.azkura.auth.ui.theme.TextPrimary
 import id.azkura.auth.ui.theme.TextSecondary
 import id.azkura.auth.util.TotpGenerator
 import id.azkura.auth.util.UriParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 private const val TAG = "ScannerScreen"
+
+/** ML Kit accepts bitmap rotation in 0/90/180/270 only. */
+private const val MAX_DECODE_DIMENSION_PX = 1024
 
 /**
  * Validate a raw barcode payload as a usable Azkura Auth account before ever
@@ -104,6 +112,76 @@ private fun validateOtpauthPayload(value: String?): Result<String> {
     }
 }
 
+/**
+ * Result of loading an image from a content [Uri]: the downsampled bitmap
+ * ready for ML Kit, plus the EXIF rotation (in degrees) that must be applied
+ * so barcodes in portrait photos / rotated screenshots decode correctly.
+ */
+private data class DecodedGalleryImage(
+    val bitmap: android.graphics.Bitmap,
+    val rotationDegrees: Int,
+)
+
+/**
+ * Read the EXIF orientation tag of the image at [uri] and convert it to the
+ * 0/90/180/270 rotation that [InputImage.fromBitmap] expects. Many phones
+ * (Samsung, Xiaomi, screenshots after auto-rotate) store photos with a
+ * non-zero orientation tag rather than physically rotating the pixels — if
+ * this is ignored, ML Kit receives an unrotated frame and can fail to find
+ * the QR finder pattern on portrait-oriented photos.
+ */
+private fun readExifRotationDegrees(context: android.content.Context, uri: Uri): Int {
+    return try {
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            when (ExifInterface(stream).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                else -> 0
+            }
+        } ?: 0
+    } catch (e: Exception) {
+        // EXIF is best-effort metadata — never let a malformed/missing tag
+        // block the scan. Falling back to "no rotation" still lets ML Kit's
+        // rotation-tolerant finder-pattern search attempt a decode.
+        Log.w(TAG, "Unable to read EXIF orientation for $uri", e)
+        0
+    }
+}
+
+/**
+ * Decode [uri] into a bitmap downsampled to at most [MAX_DECODE_DIMENSION_PX]
+ * on the longest side, to bound memory use for large camera photos/
+ * screenshots, and read its EXIF rotation. Performs ContentResolver +
+ * BitmapFactory I/O, so callers must invoke this off the main thread.
+ */
+private fun decodeGalleryImage(context: android.content.Context, uri: Uri): DecodedGalleryImage? {
+    val rotationDegrees = readExifRotationDegrees(context, uri)
+
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use { stream ->
+        android.graphics.BitmapFactory.decodeStream(stream, null, bounds)
+    } ?: return null
+
+    var inSampleSize = 1
+    while (bounds.outWidth / inSampleSize > MAX_DECODE_DIMENSION_PX ||
+        bounds.outHeight / inSampleSize > MAX_DECODE_DIMENSION_PX
+    ) {
+        inSampleSize *= 2
+    }
+    Log.i(TAG, "Image size: ${bounds.outWidth}x${bounds.outHeight}, inSampleSize=$inSampleSize, rotation=$rotationDegrees")
+
+    val decodeOptions = android.graphics.BitmapFactory.Options().apply { this.inSampleSize = inSampleSize }
+    val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+        android.graphics.BitmapFactory.decodeStream(stream, null, decodeOptions)
+    } ?: return null
+
+    return DecodedGalleryImage(bitmap, rotationDegrees)
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun ScannerScreen(
@@ -112,6 +190,7 @@ fun ScannerScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
 
     val hasCamera = remember {
         try {
@@ -123,20 +202,10 @@ fun ScannerScreen(
 
     val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
 
-    // Storage permission for gallery import (critical for Xiaomi/MIUI)
-    val mediaImagesPermission = rememberPermissionState(Manifest.permission.READ_MEDIA_IMAGES)
-    val storagePermission = rememberPermissionState(Manifest.permission.READ_EXTERNAL_STORAGE)
-    val hasMediaPermission = if (Build.VERSION.SDK_INT >= 33) {
-        mediaImagesPermission.status.isGranted
-    } else {
-        storagePermission.status.isGranted
-    }
-
     var hasScanned by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isProcessingGalleryImage by remember { mutableStateOf(false) }
     var isGalleryActive by remember { mutableStateOf(false) }
-    var pendingGalleryPick by remember { mutableStateOf(false) }
 
     val barcodeScanner = remember {
         try {
@@ -168,7 +237,10 @@ fun ScannerScreen(
             }
     }
 
-    // Process a URI from any gallery launcher
+    // Process a URI returned by either the Photo Picker or the GetContent
+    // fallback. Decoding + ContentResolver I/O runs on Dispatchers.IO so a
+    // large photo or a cloud-backed gallery item (e.g. Google Photos, not
+    // yet cached locally) can never freeze the UI thread while it loads.
     fun processGalleryUri(uri: Uri?) {
         isGalleryActive = false
         if (uri == null) return
@@ -179,49 +251,25 @@ fun ScannerScreen(
         }
         isProcessingGalleryImage = true
         errorMessage = null
-        try {
-            // Use contentResolver + InputImage.fromBitmap instead of
-            // InputImage.fromFilePath — the latter fails silently on
-            // some Xiaomi/MIUI devices even with READ_MEDIA_IMAGES granted.
-            val inputStream = context.contentResolver.openInputStream(uri)
-            if (inputStream == null) {
+
+        coroutineScope.launch {
+            val decoded = try {
+                withContext(Dispatchers.IO) { decodeGalleryImage(context, uri) }
+            } catch (e: Exception) {
+                Log.e(TAG, "Unable to open selected image", e)
                 isProcessingGalleryImage = false
-                errorMessage = "Tidak dapat membuka gambar yang dipilih"
-                return@processGalleryUri
+                errorMessage = "Tidak dapat membuka gambar: ${e.message}"
+                return@launch
             }
 
-            // Decode with downsampling to avoid OOM on large screenshots
-            val options = android.graphics.BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            android.graphics.BitmapFactory.decodeStream(inputStream, null, options)
-            inputStream.close()
-
-            val width = options.outWidth
-            val height = options.outHeight
-            var inSampleSize = 1
-            // Target max 1024px on longest side for ML Kit
-            while (width / inSampleSize > 1024 || height / inSampleSize > 1024) {
-                inSampleSize *= 2
-            }
-
-            Log.i(TAG, "Image size: ${width}x${height}, inSampleSize=$inSampleSize")
-
-            val decodeStream = context.contentResolver.openInputStream(uri)
-            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
-                this.inSampleSize = inSampleSize
-            }
-            val bitmap = android.graphics.BitmapFactory.decodeStream(decodeStream, null, decodeOptions)
-            decodeStream?.close()
-
-            if (bitmap == null) {
+            if (decoded == null) {
                 isProcessingGalleryImage = false
-                errorMessage = "Gambar tidak valid atau format tidak didukung"
-                return@processGalleryUri
+                errorMessage = "Gambar tidak valid, rusak, atau formatnya tidak didukung"
+                return@launch
             }
 
-            Log.i(TAG, "Gallery bitmap loaded: ${bitmap.width}x${bitmap.height}")
-            val image = InputImage.fromBitmap(bitmap, 0)
+            Log.i(TAG, "Gallery bitmap loaded: ${decoded.bitmap.width}x${decoded.bitmap.height}")
+            val image = InputImage.fromBitmap(decoded.bitmap, decoded.rotationDegrees)
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     isProcessingGalleryImage = false
@@ -239,83 +287,59 @@ fun ScannerScreen(
                     Log.e(TAG, "Gallery QR decode failed", e)
                     errorMessage = "Gagal membaca gambar: ${e.message}"
                 }
-        } catch (e: Exception) {
-            isProcessingGalleryImage = false
-            Log.e(TAG, "Unable to open selected image", e)
-            errorMessage = "Tidak dapat membuka gambar: ${e.message}"
         }
     }
 
-    // Strategy 1: Photo Picker (API 30+)
+    // Primary strategy: the system Photo Picker (androidx.activity
+    // PickVisualMedia). This is Google's officially recommended way to let
+    // users select an image — it requires NO runtime storage permission at
+    // all (the picker runs in a separate, permission-scoped process and
+    // only grants this app a one-shot read URI for the exact item chosen),
+    // it is consistent across OEM skins, and it is backed by a Play-services
+    // mainline module all the way back to API 19+ devices that have Google
+    // Play services installed.
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
     ) { uri: Uri? ->
         processGalleryUri(uri)
     }
 
-    // Strategy 2: GetContent (universal fallback)
+    // Fallback strategy: ACTION_OPEN_DOCUMENT / GetContent via the system
+    // document picker. Used only on the rare device without a compatible
+    // Photo Picker implementation (e.g. AOSP builds / devices without GMS).
+    // Also permission-less — access is granted per-URI by the picker itself.
     val fallbackGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
         processGalleryUri(uri)
     }
 
-    // Strategy 3: Simple ACTION_PICK intent (Xiaomi/MIUI compatible)
-    val simplePickLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        isGalleryActive = false
-        processGalleryUri(result.data?.data)
-    }
-
-    // When media permission is granted, launch the simple intent
-    LaunchedEffect(hasMediaPermission, pendingGalleryPick) {
-        if (hasMediaPermission && pendingGalleryPick) {
-            pendingGalleryPick = false
-            try {
-                val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
-                    type = "image/*"
-                }
-                simplePickLauncher.launch(pickIntent)
-            } catch (e: Exception) {
-                Log.w(TAG, "Simple gallery intent failed", e)
-                errorMessage = "Tidak dapat membuka galeri"
-            }
-        }
-    }
-
     fun launchGalleryPicker() {
         isGalleryActive = true
-        // On Xiaomi/MIUI, PickVisualMedia silently fails (no callback at all).
-        // Instead of trying broken intents, use the permission-based approach:
-        // 1. Request READ_MEDIA_IMAGES (Android 13+) or READ_EXTERNAL_STORAGE
-        // 2. When granted, use simple ACTION_PICK intent which works everywhere
-        if (!hasMediaPermission) {
-            // Request permission first — the LaunchedEffect above will launch
-            // the gallery when permission is granted.
-            pendingGalleryPick = true
-            if (Build.VERSION.SDK_INT >= 33) {
-                mediaImagesPermission.launchPermissionRequest()
-            } else {
-                storagePermission.launchPermissionRequest()
-            }
-            return
+        val photoPickerAvailable = try {
+            ActivityResultContracts.PickVisualMedia.isPhotoPickerAvailable(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "isPhotoPickerAvailable check failed", e)
+            false
         }
 
-        // Permission already granted — try simple ACTION_PICK first (most reliable)
-        try {
-            val pickIntent = android.content.Intent(android.content.Intent.ACTION_PICK).apply {
-                type = "image/*"
-            }
-            simplePickLauncher.launch(pickIntent)
-        } catch (e: Exception) {
-            // Fallback to GetContent
+        if (photoPickerAvailable) {
             try {
-                fallbackGalleryLauncher.launch("image/*")
-            } catch (e2: Exception) {
-                Log.w(TAG, "All gallery intents failed", e2)
-                errorMessage = "Tidak dapat membuka galeri di perangkat ini"
+                galleryLauncher.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Photo Picker launch failed, falling back to GetContent", e)
             }
+        }
+
+        try {
+            fallbackGalleryLauncher.launch("image/*")
+        } catch (e: Exception) {
+            isGalleryActive = false
+            Log.e(TAG, "All gallery pickers failed", e)
+            errorMessage = "Tidak dapat membuka galeri di perangkat ini"
         }
     }
 

@@ -5,11 +5,15 @@ import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import id.azkura.auth.data.local.prefs.PreferencesManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -21,6 +25,7 @@ import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Scope
 import com.google.android.gms.tasks.Task
 import java.io.IOException
@@ -28,6 +33,41 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+private const val TAG = "GoogleAuthService"
+private const val AUTHORIZE_TIMEOUT_MS = 25_000L
+
+/**
+ * Classified Google sign-in / authorization failures.
+ *
+ * Google Play services and network failures surface as opaque
+ * [ApiException]/[IOException] instances with English, developer-oriented
+ * messages. Classifying them here means the Settings UI can show one clear,
+ * actionable message per failure category (cancel, no network, bad/expired
+ * token, Play services problem) instead of leaking raw SDK text to the user.
+ */
+sealed class GoogleSignInException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class Cancelled(cause: Throwable? = null) :
+        GoogleSignInException("Login Google dibatalkan", cause)
+
+    class NetworkError(cause: Throwable? = null) :
+        GoogleSignInException("Tidak ada koneksi internet. Periksa jaringan Anda dan coba lagi.", cause)
+
+    class SessionExpired(cause: Throwable? = null) :
+        GoogleSignInException("Sesi Google telah berakhir. Silakan login kembali.", cause)
+
+    class TokenError(cause: Throwable? = null) :
+        GoogleSignInException("Gagal mendapatkan token akses Google. Coba login ulang.", cause)
+
+    class PlayServicesError(cause: Throwable? = null) :
+        GoogleSignInException("Google Play Services bermasalah di perangkat ini. Perbarui Google Play Services dan coba lagi.", cause)
+
+    class Timeout(cause: Throwable? = null) :
+        GoogleSignInException("Login Google memakan waktu terlalu lama. Coba lagi.", cause)
+
+    class Unknown(message: String, cause: Throwable? = null) :
+        GoogleSignInException(message, cause)
+}
 
 /**
  * Google Sign-In / OAuth service.
@@ -37,6 +77,9 @@ import kotlin.coroutines.resumeWithException
  * Google Identity Services' AuthorizationClient to request the same scopes as the
  * browser extension (`openid email profile drive.file`). If Google Play services
  * needs user consent, callers receive a PendingIntent and must launch it from UI.
+ *
+ * All failure paths are translated into [GoogleSignInException] subtypes so the
+ * UI layer can render a specific, actionable message instead of a raw SDK error.
  */
 @Singleton
 class GoogleAuthService @Inject constructor(
@@ -49,20 +92,44 @@ class GoogleAuthService @Inject constructor(
      * Start or refresh Google authorization. The returned outcome is either an
      * immediate authorized session or a consent PendingIntent that must be
      * resolved by the caller.
+     *
+     * Wrapped with a 25s timeout so a hung Play services call (poor network,
+     * ANR'd system process, etc.) can never leave the caller's "signing in..."
+     * UI state spinning forever — it always resolves to either success or a
+     * clear [GoogleSignInException].
      */
     suspend fun authorize(activity: Activity): GoogleAuthorizationOutcome {
-        val builder = AuthorizationRequest.builder()
-            .setRequestedScopes(GOOGLE_SCOPES.map(::Scope))
+        return try {
+            withTimeout(AUTHORIZE_TIMEOUT_MS) {
+                val builder = AuthorizationRequest.builder()
+                    .setRequestedScopes(GOOGLE_SCOPES.map(::Scope))
 
-        preferencesManager.googleUserEmail.first()
-            ?.takeIf { it.isNotBlank() }
-            ?.let { email -> builder.setAccount(AndroidAccount(email, GOOGLE_ACCOUNT_TYPE)) }
+                preferencesManager.googleUserEmail.first()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { email -> builder.setAccount(AndroidAccount(email, GOOGLE_ACCOUNT_TYPE)) }
 
-        val result = Identity.getAuthorizationClient(activity)
-            .authorize(builder.build())
-            .await()
+                val result = Identity.getAuthorizationClient(activity)
+                    .authorize(builder.build())
+                    .await()
 
-        return processAuthorizationResult(result)
+                processAuthorizationResult(result)
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Google authorize() timed out", e)
+            throw GoogleSignInException.Timeout(e)
+        } catch (e: ApiException) {
+            throw e.toSignInException()
+        } catch (e: IOException) {
+            Log.e(TAG, "Google authorize() network error", e)
+            throw GoogleSignInException.NetworkError(e)
+        } catch (e: GoogleSignInException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Google authorize() failed", e)
+            throw GoogleSignInException.Unknown(e.message ?: "Login Google gagal", e)
+        }
     }
 
     /** Convenience alias for the settings UI sign-in action. */
@@ -74,19 +141,20 @@ class GoogleAuthService @Inject constructor(
      */
     suspend fun handleAuthorizationResult(intent: Intent?): GoogleAuthorizedSession {
         if (intent == null) {
-            throw IllegalArgumentException("Google sign-in was cancelled")
+            throw GoogleSignInException.Cancelled()
         }
 
         val result = try {
             Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(intent)
         } catch (error: ApiException) {
-            throw IllegalArgumentException(error.message ?: "Google sign-in failed", error)
+            Log.e(TAG, "getAuthorizationResultFromIntent failed", error)
+            throw error.toSignInException()
         }
 
         return when (val outcome = processAuthorizationResult(result)) {
             is GoogleAuthorizationOutcome.Authorized -> outcome.session
             is GoogleAuthorizationOutcome.NeedsResolution -> {
-                throw IllegalStateException("Google sign-in still requires user consent")
+                throw GoogleSignInException.Unknown("Google sign-in still requires user consent")
             }
         }
     }
@@ -108,6 +176,7 @@ class GoogleAuthService @Inject constructor(
         return if (elapsed in 0 until TOKEN_VALIDITY_MS) {
             token
         } else {
+            Log.d(TAG, "Stored Google access token expired locally, clearing")
             preferencesManager.clearGoogleAccessToken()
             null
         }
@@ -121,17 +190,17 @@ class GoogleAuthService @Inject constructor(
     private suspend fun processAuthorizationResult(result: AuthorizationResult): GoogleAuthorizationOutcome {
         if (result.hasResolution()) {
             val pendingIntent = result.pendingIntent
-                ?: throw IllegalStateException("Google authorization requires consent but no resolution was returned")
+                ?: throw GoogleSignInException.Unknown("Google authorization requires consent but no resolution was returned")
             return GoogleAuthorizationOutcome.NeedsResolution(pendingIntent)
         }
 
         val accessToken = result.accessToken?.takeIf { it.isNotBlank() }
-            ?: throw IllegalStateException("Google authorization did not return an access token")
+            ?: throw GoogleSignInException.TokenError()
 
         val accountProfile = result.toProfileOrNull()
         val fetchedProfile = fetchUserProfile(accessToken)
         val profile = mergeProfiles(fetchedProfile, accountProfile)
-            ?: throw IllegalStateException("Unable to read Google user profile")
+            ?: throw GoogleSignInException.Unknown("Unable to read Google user profile")
 
         preferencesManager.setGoogleAuthSession(
             name = profile.name,
@@ -140,6 +209,7 @@ class GoogleAuthService @Inject constructor(
             accessToken = accessToken,
             tokenTimeMillis = System.currentTimeMillis(),
         )
+        Log.d(TAG, "Google authorization successful for ${profile.email}")
 
         return GoogleAuthorizationOutcome.Authorized(
             GoogleAuthorizedSession(
@@ -147,6 +217,25 @@ class GoogleAuthService @Inject constructor(
                 user = profile,
             ),
         )
+    }
+
+    /** Map a Play services [ApiException] status code to a classified, user-facing exception. */
+    private fun ApiException.toSignInException(): GoogleSignInException = when (statusCode) {
+        CommonStatusCodes.CANCELED -> GoogleSignInException.Cancelled(this)
+        CommonStatusCodes.NETWORK_ERROR -> GoogleSignInException.NetworkError(this)
+        CommonStatusCodes.TIMEOUT -> GoogleSignInException.Timeout(this)
+        CommonStatusCodes.SIGN_IN_REQUIRED,
+        CommonStatusCodes.INVALID_ACCOUNT,
+        -> GoogleSignInException.SessionExpired(this)
+        CommonStatusCodes.INTERNAL_ERROR,
+        CommonStatusCodes.DEVELOPER_ERROR,
+        CommonStatusCodes.API_NOT_CONNECTED,
+        CommonStatusCodes.SERVICE_VERSION_UPDATE_REQUIRED,
+        CommonStatusCodes.SERVICE_DISABLED,
+        CommonStatusCodes.SERVICE_MISSING,
+        CommonStatusCodes.SERVICE_INVALID,
+        -> GoogleSignInException.PlayServicesError(this)
+        else -> GoogleSignInException.Unknown(message ?: "Login Google gagal (code $statusCode)", this)
     }
 
     private fun AuthorizationResult.toProfileOrNull(): GoogleUserProfile? {
@@ -182,7 +271,10 @@ class GoogleAuthService @Inject constructor(
 
         try {
             okHttpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "userinfo request failed: HTTP ${response.code}")
+                    return@use null
+                }
                 val body = response.body?.string().orEmpty()
                 val data = json.parseToJsonElement(body).jsonObject
                 val email = data["email"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
@@ -194,9 +286,11 @@ class GoogleAuthService @Inject constructor(
                     picture = data["picture"]?.jsonPrimitive?.contentOrNull,
                 )
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            Log.w(TAG, "userinfo request network error", e)
             null
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "userinfo request failed", e)
             null
         }
     }

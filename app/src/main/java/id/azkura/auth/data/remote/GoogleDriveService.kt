@@ -1,5 +1,6 @@
 package id.azkura.auth.data.remote
 
+import android.util.Log
 import id.azkura.auth.BuildConfig
 import id.azkura.auth.data.local.prefs.PreferencesManager
 import id.azkura.auth.data.local.crypto.CryptoManager
@@ -60,6 +61,7 @@ class GoogleDriveService @Inject constructor(
     /** Upload the current vault and return the created Drive file metadata. */
     suspend fun backupDetailed(accessToken: String): GoogleDriveBackupResult {
         require(accessToken.isNotBlank()) { "Google access token is missing" }
+        Log.d(TAG, "backupDetailed: starting upload")
 
         val accounts = accountRepository.getAllAccounts()
         val folders = accountRepository.getAllFolders()
@@ -101,6 +103,7 @@ class GoogleDriveService @Inject constructor(
         val timestamp = System.currentTimeMillis().toString()
         statsRepository.trackBackup()
         preferencesManager.setLastBackupAt(timestamp)
+        Log.d(TAG, "backupDetailed: uploaded '${upload.name}' (${accounts.size} accounts, ${folders.size} folders)")
 
         return GoogleDriveBackupResult(
             fileId = upload.id,
@@ -119,7 +122,11 @@ class GoogleDriveService @Inject constructor(
     /** Download the newest Google Drive backup and return import counts. */
     suspend fun restoreLatest(accessToken: String): GoogleDriveRestoreResult {
         val latest = listBackups(accessToken, maxResults = 1).firstOrNull()
-            ?: throw IOException("No Azkura Auth backup found in Google Drive")
+            ?: run {
+                Log.d(TAG, "restoreLatest: no backup found in Drive")
+                throw IOException("No Azkura Auth backup found in Google Drive")
+            }
+        Log.d(TAG, "restoreLatest: found backup '${latest.name}' (createdTime=${latest.createdTime})")
         return restoreFile(accessToken, latest)
     }
 
@@ -178,6 +185,11 @@ class GoogleDriveService @Inject constructor(
         val folderMerge = mergeFolders(backup.folders)
         val importedAccounts = mergeAccounts(backup.accounts, folderMerge.idMap)
         val importedFolders = folderMerge.importedCount
+        Log.d(
+            TAG,
+            "restoreFile: merged ${file.name} -> added $importedAccounts account(s), " +
+                "$importedFolders folder(s) (non-destructive merge, no local data removed)",
+        )
 
         return GoogleDriveRestoreResult(
             fileId = file.id,
@@ -361,8 +373,10 @@ class GoogleDriveService @Inject constructor(
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 if (response.code == 401 || response.code == 403) {
+                    Log.w(TAG, "Drive request unauthorized (HTTP ${response.code})")
                     throw GoogleDriveAuthException("Google session expired. Please sign in again.")
                 }
+                Log.e(TAG, "Drive API error HTTP ${response.code}: ${body.ifBlank { response.message }}")
                 throw IOException("Google Drive API error HTTP ${response.code}: ${body.ifBlank { response.message }}")
             }
             body
@@ -417,6 +431,7 @@ class GoogleDriveService @Inject constructor(
         }
         private const val DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
         private const val DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
+        private const val TAG = "GoogleDriveService"
         private const val MULTIPART_BOUNDARY = "-------azkura-auth-android-boundary"
 
         val FILE_TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter
