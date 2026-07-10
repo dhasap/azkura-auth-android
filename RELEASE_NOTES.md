@@ -1,65 +1,73 @@
-# Azkura Auth Android v2.10.0
+# Azkura Auth Android v2.13.0
 
-Version: `2.10.0`
-Version code: `2100`
+Version: `2.13.0`
+Version code: `2130`
 Package: `id.azkura.auth`
 
 ## Overview
 
-This release adds **QR import from the phone gallery**, makes the account-add /
-QR-scan / gallery-import flows crash-safe on unsupported devices, and closes the
-remaining open security-hardening issues. It also fixes a build-breaking bug that
-prevented the previous source from compiling.
+This release is a full audit-and-fix pass across QR gallery import, Google
+Sign-In UX, Google Drive auto-backup/auto-restore, the Recents (App
+Switcher) thumbnail, and the CI build pipeline itself. Every fix targets
+the root cause, not just the visible symptom — see `CHANGELOG.md` for the
+full technical write-up.
 
 ## What's New
 
-- **Import QR from Gallery**
-  - New gallery action on the scanner screen decodes an `otpauth://` QR from any
-    saved image.
-  - Uses the Android Photo Picker, so it needs **no storage/media permission** on
-    any supported API level.
-  - Works even when the device has no camera or the camera permission is denied.
-
-- **Crash-Safe Enrollment**
-  - Unreadable/corrupted images, non-`otpauth` QR codes, and invalid Base32
-    secrets now show a clear message instead of crashing.
-  - Devices without a camera fall back gracefully to gallery import.
-  - A single malformed secret can no longer freeze the Home screen's code refresh.
-
-- **Security Hardening**
-  - Release builds are now minified/obfuscated with R8 + `proguard-rules.pro` (#12).
-  - TLS certificate pinning for Google API traffic via `network_security_config.xml` (#13).
-  - Removed the dead, unencrypted local-export path — all exports are encrypted (#14).
-  - Usage statistics file is now encrypted at rest (#15).
-  - Cleartext HTTP traffic is blocked app-wide, including on Android 8.0–8.1 (#16).
-  - `security-crypto` upgraded from alpha to the stable `1.1.0`.
-
-- **Build Fix**
-  - Removing a PIN now re-verifies the current PIN in a confirmation dialog
-    (restores compilation and closes a privilege-escalation gap).
+- **Gallery QR import, fixed at the root.** Replaced the permission-gated
+  `ACTION_PICK` fallback with the official Android Photo Picker
+  (`PickVisualMedia`, no runtime permission) as the primary path, with
+  `GetContent()` as an automatic fallback. `READ_MEDIA_IMAGES` /
+  `READ_EXTERNAL_STORAGE` are no longer declared in the manifest. Bitmap
+  decoding now runs off the main thread, and EXIF rotation is honored.
+- **Google Sign-In UX.** Failures are now classified
+  (`GoogleSignInException`: cancelled / no network / token error / session
+  expired / Play services problem / timeout) with clear Indonesian
+  messages, a 25s timeout so the flow can never hang, and an animated
+  Connect/Backup button state.
+- **Auto Backup after login.** Signing in with Google now automatically
+  backs up to Drive in the background, with retry + exponential backoff
+  on transient failures and structured logging.
+- **Auto Restore after login.** After login, the app checks Drive for an
+  existing backup and restores it automatically via the existing additive
+  merge — it only adds missing accounts/folders and never deletes or
+  overwrites local data, so this can never cause data loss.
+- **Recents (App Switcher) preview.** The app previously showed a solid
+  black thumbnail in Recents because `FLAG_SECURE` blocks the OS from
+  capturing any image of the window. Added a branded, blurred
+  `PrivacyOverlay` that is shown before `FLAG_SECURE` is briefly cleared in
+  `onPause()` (so the Recents snapshot captures only the safe overlay) and
+  restored before the overlay is hidden again in `onResume()`. Security
+  level (screenshot/screen-recording protection) is unchanged.
+- **CI pipeline.** Fixed a fake-passing "Verify APK signature" step
+  (`apksigner: command not found` was being silently swallowed) so it now
+  genuinely verifies the signature and fails loudly if it can't. Bumped
+  `actions/checkout`, `actions/setup-java`, `actions/upload-artifact`,
+  `actions/download-artifact`, and `gradle/actions/setup-gradle` to clear
+  all "Node.js 20 is deprecated" warnings. The build now completes with
+  zero warnings and zero errors.
 
 ## Build & Signing
 
-This release is built and signed by GitHub Actions (`.github/workflows/release.yml`).
-The signed APK is attached to this GitHub Release as an asset.
+This release is built and signed entirely by GitHub Actions
+(`.github/workflows/build-release.yml`). The signed APK and AAB are
+attached to this GitHub Release as assets.
 
-To build locally instead:
+To verify the signature locally:
 
 ```bash
-./gradlew :app:compileDebugKotlin :app:assembleRelease
-apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
+apksigner verify --verbose app-release.apk
 ```
 
 Verified metadata:
 
 - Package: `id.azkura.auth`
-- Version name: `2.10.0`
-- Version code: `2100`
-- APK signature schemes: v1, v2, and v3
+- Version name: `2.13.0`
+- Version code: `2130`
+- APK signature schemes: v2 and v3 (verified in CI)
 
 ## Install
 
-Download the APK asset from this GitHub Release and install it on Android 8.0+.
-
-If a file manager displays an older icon for the APK, clear the file manager cache
-or rename the APK. Android launchers and file managers can cache icons independently.
+Download `azkura-auth-v2.13.0-release.apk` below and install it on a
+device with "Install unknown apps" allowed for your file manager/browser,
+or install via `adb install azkura-auth-v2.13.0-release.apk`.
