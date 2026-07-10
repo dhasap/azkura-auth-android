@@ -230,10 +230,6 @@ class GoogleAuthService @Inject constructor(
         CommonStatusCodes.INTERNAL_ERROR,
         CommonStatusCodes.DEVELOPER_ERROR,
         CommonStatusCodes.API_NOT_CONNECTED,
-        CommonStatusCodes.SERVICE_VERSION_UPDATE_REQUIRED,
-        CommonStatusCodes.SERVICE_DISABLED,
-        CommonStatusCodes.SERVICE_MISSING,
-        CommonStatusCodes.SERVICE_INVALID,
         -> GoogleSignInException.PlayServicesError(this)
         else -> GoogleSignInException.Unknown(message ?: "Login Google gagal (code $statusCode)", this)
     }
